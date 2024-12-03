@@ -256,25 +256,42 @@ func (cl *ChunkPipe[T]) PopEnd() (T, bool) {
 
 // 重命名原來的 Range 為 RangeChunk
 func (cl *ChunkPipe[T]) RangeChunk() <-chan []T {
-	ch := make(chan []T)
+	ch := make(chan []T, 256) // 更大的緩衝區
 	go func() {
 		cl.mu.RLock()
 		defer cl.mu.RUnlock()
 
+		// 預分配一個大的切片
+		buffer := make([]T, 0, 1024)
+
 		current := cl.head
 		for current != nil {
 			if current.offset < current.size {
-				validCount := current.size - current.offset
-				newData := make([]T, validCount)
-				// 使用指針直接複製數據
-				for i := 0; i < validCount; i++ {
-					ptr := unsafe.Add(current.data, uintptr(current.offset+i)*unsafe.Sizeof(*(*T)(current.data)))
-					newData[i] = *(*T)(ptr)
+				// 直接使用原始數據
+				data := unsafe.Slice((*T)(current.data), current.size)
+				validData := data[current.offset:]
+
+				// 如果緩衝區足夠，直接追加
+				if len(buffer)+len(validData) <= cap(buffer) {
+					buffer = append(buffer, validData...)
+				} else {
+					// 發送當前緩衝區
+					if len(buffer) > 0 {
+						ch <- buffer
+						buffer = make([]T, 0, 1024)
+					}
+					// 直接發送大塊數據
+					ch <- validData
 				}
-				ch <- newData
 			}
 			current = current.next
 		}
+
+		// 發送剩餘的數據
+		if len(buffer) > 0 {
+			ch <- buffer
+		}
+
 		close(ch)
 	}()
 	return ch
@@ -282,22 +299,45 @@ func (cl *ChunkPipe[T]) RangeChunk() <-chan []T {
 
 // 新增高性能的單元素 Range 方法
 func (cl *ChunkPipe[T]) Range() <-chan T {
-	ch := make(chan T, 8192)
+	ch := make(chan T, 65536) // 更大的緩衝區
 	go func() {
 		cl.mu.RLock()
 		defer cl.mu.RUnlock()
+
+		// 預分配緩衝區
+		buffer := make([]T, 64)
+		bufIdx := 0
 
 		current := cl.head
 		for current != nil {
 			if current.size > current.offset {
 				basePtr := current.data
+				elementSize := unsafe.Sizeof(*(*T)(basePtr))
+
+				// 使用緩衝區批量處理
 				for i := current.offset; i < current.size; i++ {
-					ptr := unsafe.Add(basePtr, uintptr(i)*unsafe.Sizeof(*(*T)(basePtr)))
-					ch <- *(*T)(ptr)
+					ptr := unsafe.Add(basePtr, uintptr(i)*elementSize)
+					buffer[bufIdx] = *(*T)(ptr)
+					bufIdx++
+
+					// 當緩衝區滿時，批量發送
+					if bufIdx == 64 {
+						// 一次性複製到通道
+						for _, v := range buffer {
+							ch <- v
+						}
+						bufIdx = 0
+					}
 				}
 			}
 			current = current.next
 		}
+
+		// 發送剩餘的數據
+		for i := 0; i < bufIdx; i++ {
+			ch <- buffer[i]
+		}
+
 		close(ch)
 	}()
 	return ch
