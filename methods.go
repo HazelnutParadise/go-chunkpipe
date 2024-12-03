@@ -1,6 +1,9 @@
 package chunkpipe
 
-import "unsafe"
+import (
+	"unsafe"
+	_ "unsafe"
+)
 
 // 插入數據到 ChunkPipe，支援泛型和鏈式呼叫
 func (cl *ChunkPipe[T]) Push(data []T) *ChunkPipe[T] {
@@ -11,7 +14,22 @@ func (cl *ChunkPipe[T]) Push(data []T) *ChunkPipe[T] {
 	cl.mu.Lock()
 	defer cl.mu.Unlock()
 
-	// 使用 unsafe 但更安全的方式
+	// 小數據優化（<=64 字節）
+	if len(data) <= 8 {
+		if cl.tail != nil && cl.tail.size-cl.tail.offset < 16 {
+			// 直接寫入尾部，避免新塊分配
+			ptr := unsafe.Add(cl.tail.data, uintptr(cl.tail.size)*unsafe.Sizeof(data[0]))
+			for i := range data {
+				*(*T)(unsafe.Add(ptr, uintptr(i)*unsafe.Sizeof(data[0]))) = data[i]
+			}
+			cl.tail.size += len(data)
+			cl.totalSize += len(data)
+			cl.validSize += len(data)
+			return cl
+		}
+	}
+
+	// 大數據優化
 	dataPtr := unsafe.Pointer(&data[0])
 	dataSize := len(data)
 
@@ -152,7 +170,7 @@ func (cl *ChunkPipe[T]) PopChunkEnd() ([]T, bool) {
 	block := cl.tail
 	validCount := block.size - block.offset
 	if validCount <= 0 {
-		// 移除空塊
+		// 移除��塊
 		cl.tail = block.prev
 		if cl.tail != nil {
 			cl.tail.next = nil
@@ -204,14 +222,20 @@ func (cl *ChunkPipe[T]) PopFront() (T, bool) {
 		return zero, false
 	}
 
-	// 使用 unsafe 但帶有邊界檢查
-	data := unsafe.Slice((*T)(block.data), block.size)
-	value := data[block.offset]
+	// 直接記憶體訪問
+	ptr := unsafe.Add(block.data, uintptr(block.offset)*unsafe.Sizeof(*(*T)(block.data)))
+	value := *(*T)(ptr)
 
 	block.offset++
 	cl.validSize--
 	cl.totalSize--
 
+	// 快速路徑：如果塊還有很多數據，不移除它
+	if block.offset < block.size-8 {
+		return value, true
+	}
+
+	// 慢路徑：塊即將用完，考慮移除
 	if block.offset >= block.size {
 		cl.head = block.next
 		if cl.head != nil {
