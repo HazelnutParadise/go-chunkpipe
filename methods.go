@@ -4,28 +4,20 @@ import "unsafe"
 
 // 插入數據到 ChunkPipe，支援泛型和鏈式呼叫
 func (cl *ChunkPipe[T]) Push(data []T) *ChunkPipe[T] {
-	// 小數據快速路徑
-	if len(data) <= 64 {
-		cl.mu.Lock()
-		if cl.tail != nil && cl.tail.size-cl.tail.offset < 64 {
-			// 直接追加到現有塊
-			ptr := unsafe.Add(cl.tail.data, uintptr(cl.tail.size)*unsafe.Sizeof(data[0]))
-			copy(unsafe.Slice((*T)(ptr), len(data)), data)
-			cl.tail.size += len(data)
-			cl.totalSize += len(data)
-			cl.validSize += len(data)
-			cl.mu.Unlock()
-			return cl
-		}
-		cl.mu.Unlock()
+	if len(data) == 0 {
+		return cl
 	}
 
 	cl.mu.Lock()
 	defer cl.mu.Unlock()
 
+	// 使用 unsafe 但更安全的方式
+	dataPtr := unsafe.Pointer(&data[0])
+	dataSize := len(data)
+
 	block := &Chunk[T]{
-		data:   unsafe.Pointer(&data[0]),
-		size:   len(data),
+		data:   dataPtr,
+		size:   dataSize,
 		offset: 0,
 	}
 
@@ -37,13 +29,16 @@ func (cl *ChunkPipe[T]) Push(data []T) *ChunkPipe[T] {
 	}
 	cl.tail = block
 
-	cl.insertBlockToTree(block)
-	cl.totalSize += len(data)
-	cl.validSize += len(data)
+	cl.totalSize += dataSize
+	cl.validSize += dataSize
 	return cl
 }
 
 func (cl *ChunkPipe[T]) insertBlockToTree(block *Chunk[T]) {
+	if block == nil {
+		return
+	}
+
 	newNode := &TreeNode[T]{
 		sum:       block.size,
 		validSize: block.size - block.offset,
@@ -106,11 +101,31 @@ func (cl *ChunkPipe[T]) PopChunkFront() ([]T, bool) {
 	cl.mu.Lock()
 	defer cl.mu.Unlock()
 
-	if cl.head == nil {
+	if cl.head == nil || cl.validSize == 0 {
 		return nil, false
 	}
 
 	block := cl.head
+	validCount := block.size - block.offset
+	if validCount <= 0 {
+		// 移除空塊
+		cl.head = block.next
+		if cl.head != nil {
+			cl.head.prev = nil
+		} else {
+			cl.tail = nil
+		}
+		return nil, false
+	}
+
+	// 創建新的切片並安全複製數據
+	newData := make([]T, validCount)
+	if block.data != nil {
+		src := unsafe.Slice((*T)(block.data), block.size)
+		copy(newData, src[block.offset:])
+	}
+
+	// 更新鏈表
 	cl.head = block.next
 	if cl.head != nil {
 		cl.head.prev = nil
@@ -118,16 +133,10 @@ func (cl *ChunkPipe[T]) PopChunkFront() ([]T, bool) {
 		cl.tail = nil
 	}
 
-	validCount := block.size - block.offset
+	// 更新計數
 	cl.totalSize -= validCount
 	cl.validSize -= validCount
 
-	// 使用指針計算創建新的切片
-	newData := make([]T, validCount)
-	for i := 0; i < validCount; i++ {
-		ptr := unsafe.Add(block.data, uintptr(block.offset+i)*unsafe.Sizeof(*(*T)(block.data)))
-		newData[i] = *(*T)(ptr)
-	}
 	return newData, true
 }
 
@@ -136,11 +145,31 @@ func (cl *ChunkPipe[T]) PopChunkEnd() ([]T, bool) {
 	cl.mu.Lock()
 	defer cl.mu.Unlock()
 
-	if cl.tail == nil {
+	if cl.tail == nil || cl.validSize == 0 {
 		return nil, false
 	}
 
 	block := cl.tail
+	validCount := block.size - block.offset
+	if validCount <= 0 {
+		// 移除空塊
+		cl.tail = block.prev
+		if cl.tail != nil {
+			cl.tail.next = nil
+		} else {
+			cl.head = nil
+		}
+		return nil, false
+	}
+
+	// 創建新的切片並安全複製數據
+	newData := make([]T, validCount)
+	if block.data != nil {
+		src := unsafe.Slice((*T)(block.data), block.size)
+		copy(newData, src[block.offset:])
+	}
+
+	// 更新鏈表
 	cl.tail = block.prev
 	if cl.tail != nil {
 		cl.tail.next = nil
@@ -148,12 +177,11 @@ func (cl *ChunkPipe[T]) PopChunkEnd() ([]T, bool) {
 		cl.head = nil
 	}
 
-	validCount := block.size - block.offset
+	// 更新計數
 	cl.totalSize -= validCount
 	cl.validSize -= validCount
 
-	data := unsafe.Slice((*T)(block.data), block.size)
-	return data[block.offset:block.size], true
+	return newData, true
 }
 
 func (cl *ChunkPipe[T]) PopFront() (T, bool) {
@@ -176,8 +204,9 @@ func (cl *ChunkPipe[T]) PopFront() (T, bool) {
 		return zero, false
 	}
 
-	ptr := unsafe.Add(block.data, uintptr(block.offset)*unsafe.Sizeof(*(*T)(block.data)))
-	value := *(*T)(ptr)
+	// 使用 unsafe 但帶有邊界檢查
+	data := unsafe.Slice((*T)(block.data), block.size)
+	value := data[block.offset]
 
 	block.offset++
 	cl.validSize--
