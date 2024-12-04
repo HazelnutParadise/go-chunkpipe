@@ -1,9 +1,17 @@
 package chunkpipe
 
 import (
-	"syscall"
 	"unsafe"
 	_ "unsafe"
+)
+
+// Memory protection constants
+const (
+	PROT_READ  = 0x1
+	PROT_WRITE = 0x2
+
+	MAP_PRIVATE = 0x2
+	MAP_ANON    = 0x20
 )
 
 //go:linkname memmove runtime.memmove
@@ -23,8 +31,8 @@ func (p *MemoryPool) numaAlloc(size uintptr) unsafe.Pointer {
 
 	// 在特定 NUMA 節點上分配記憶體
 	addr, _ := mmap(0, size,
-		syscall.PROT_READ|syscall.PROT_WRITE,
-		syscall.MAP_PRIVATE|syscall.MAP_ANON|
+		PROT_READ|PROT_WRITE,
+		MAP_PRIVATE|MAP_ANON|
 			int(node)<<24, // NUMA 節點選擇
 		-1, 0)
 	return unsafe.Pointer(addr)
