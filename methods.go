@@ -27,28 +27,36 @@ func (cl *ChunkPipe[T]) Push(data []T) *ChunkPipe[T] {
 	dstPtr := unsafe.Pointer(&newData[0])
 	totalSize := uintptr(dataLen) * elemSize
 
-	// 128字節對齊複製
-	aligned128 := totalSize &^ 127
-	for i := uintptr(0); i < aligned128; i += 128 {
-		// 展開循環，一次複製 128 字節
-		*(*[16]uint64)(unsafe.Add(dstPtr, i)) = *(*[16]uint64)(unsafe.Add(srcPtr, i))
-	}
+	if dataLen <= 32 {
+		// 小數據快速路徑
+		// 直接使用 uint64 複製
+		for i := uintptr(0); i < totalSize; i += 8 {
+			*(*uint64)(unsafe.Add(dstPtr, i)) = *(*uint64)(unsafe.Add(srcPtr, i))
+		}
+	} else {
+		// 128字節對齊複製
+		aligned128 := totalSize &^ 127
+		for i := uintptr(0); i < aligned128; i += 128 {
+			// 展開循環，一次複製 128 字節
+			*(*[16]uint64)(unsafe.Add(dstPtr, i)) = *(*[16]uint64)(unsafe.Add(srcPtr, i))
+		}
 
-	// 64字節對齊複製
-	aligned64 := totalSize &^ 63
-	for i := aligned128; i < aligned64; i += 64 {
-		*(*[8]uint64)(unsafe.Add(dstPtr, i)) = *(*[8]uint64)(unsafe.Add(srcPtr, i))
-	}
+		// 64字節對齊複製
+		aligned64 := totalSize &^ 63
+		for i := aligned128; i < aligned64; i += 64 {
+			*(*[8]uint64)(unsafe.Add(dstPtr, i)) = *(*[8]uint64)(unsafe.Add(srcPtr, i))
+		}
 
-	// 8字節對齊複製
-	aligned8 := totalSize &^ 7
-	for i := aligned64; i < aligned8; i += 8 {
-		*(*uint64)(unsafe.Add(dstPtr, i)) = *(*uint64)(unsafe.Add(srcPtr, i))
-	}
+		// 8字節對齊複製
+		aligned8 := totalSize &^ 7
+		for i := aligned64; i < aligned8; i += 8 {
+			*(*uint64)(unsafe.Add(dstPtr, i)) = *(*uint64)(unsafe.Add(srcPtr, i))
+		}
 
-	// 複製剩餘字節
-	for i := aligned8; i < totalSize; i++ {
-		*(*uint8)(unsafe.Add(dstPtr, i)) = *(*uint8)(unsafe.Add(srcPtr, i))
+		// 複製剩餘字節
+		for i := aligned8; i < totalSize; i++ {
+			*(*uint8)(unsafe.Add(dstPtr, i)) = *(*uint8)(unsafe.Add(srcPtr, i))
+		}
 	}
 
 	block := &Chunk[T]{
@@ -281,10 +289,12 @@ func (cl *ChunkPipe[T]) PopFront() (T, bool) {
 	cl.validSize--
 	cl.totalSize--
 
-	// 使用位運算優化比較
-	offset := uintptr(head.offset)
-	size := uintptr(head.size)
-	if (offset | size) >= size {
+	// 使用更多的位運算和預取
+	if i := uintptr(head.offset); (i | uintptr(head.size)) >= uintptr(head.size) {
+		// 預取下一個塊
+		if next := head.next; next != nil {
+			_ = next.data
+		}
 		// 快速路徑
 		next := head.next
 		if next != nil {
