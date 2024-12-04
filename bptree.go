@@ -51,7 +51,30 @@ func NewBPTree[T any]() *BPTree[T] {
 }
 
 func (t *BPTree[T]) Insert(key uintptr, data unsafe.Pointer) {
+	if t.root == nil {
+		// 創建根節點
+		nodeSize := unsafe.Sizeof(BPNode[T]{}) +
+			(maxKeys * unsafe.Sizeof(uintptr(0))) +
+			(maxKeys * unsafe.Sizeof(unsafe.Pointer(nil))) +
+			(maxChild * unsafe.Sizeof(unsafe.Pointer(nil)))
+
+		root := (*BPNode[T])(t.pool.Alloc(nodeSize))
+		if root == nil {
+			return
+		}
+
+		// 初始化根節點
+		root.keys = unsafe.Add(unsafe.Pointer(root), unsafe.Sizeof(BPNode[T]{}))
+		root.data = unsafe.Add(root.keys, maxKeys*unsafe.Sizeof(uintptr(0)))
+		root.children = unsafe.Add(root.data, maxKeys*unsafe.Sizeof(unsafe.Pointer(nil)))
+		root.isLeaf = true
+		t.root = unsafe.Pointer(root)
+	}
+
 	root := (*BPNode[T])(t.root)
+	if root == nil {
+		return
+	}
 
 	// 如果根節點已滿，需要分裂
 	if root.count >= maxKeys {
@@ -59,9 +82,21 @@ func (t *BPTree[T]) Insert(key uintptr, data unsafe.Pointer) {
 			(maxKeys * unsafe.Sizeof(uintptr(0))) +
 			(maxKeys * unsafe.Sizeof(unsafe.Pointer(nil))) +
 			(maxChild * unsafe.Sizeof(unsafe.Pointer(nil)))
+
 		newRoot := (*BPNode[T])(t.pool.Alloc(nodeSize))
+		if newRoot == nil {
+			return
+		}
+
+		// 初始化新根節點
+		newRoot.keys = unsafe.Add(unsafe.Pointer(newRoot), unsafe.Sizeof(BPNode[T]{}))
+		newRoot.data = unsafe.Add(newRoot.keys, maxKeys*unsafe.Sizeof(uintptr(0)))
+		newRoot.children = unsafe.Add(newRoot.data, maxKeys*unsafe.Sizeof(unsafe.Pointer(nil)))
+
+		// 設置子節點
+		*(*unsafe.Pointer)(newRoot.children) = t.root
 		t.root = unsafe.Pointer(newRoot)
-		newRoot.children = unsafe.Pointer(&root)
+
 		t.splitChild(newRoot, 0, root)
 		t.insertNonFull(newRoot, key, data)
 	} else {
@@ -119,25 +154,43 @@ func (t *BPTree[T]) insertNonFull(node *BPNode[T], key uintptr, data unsafe.Poin
 }
 
 func (t *BPTree[T]) searchPos(node *BPNode[T], key uintptr) uintptr {
-	// 使用 AVX2 指令集進行並行比較
-	keys := (*[maxKeys]uintptr)(node.keys)
+	// 使用二分搜索
+	left := uintptr(0)
+	right := uintptr(node.count)
 
-	// 使用 SIMD 比較 16 個鍵
-	for i := uintptr(0); i < uintptr(node.count); i += 16 {
-		if keys[i] >= key {
-			return i
+	for left < right {
+		mid := (left + right) >> 1
+		midKey := *(*uintptr)(unsafe.Add(node.keys, mid*unsafe.Sizeof(uintptr(0))))
+
+		if midKey < key {
+			left = mid + 1
+		} else {
+			right = mid
 		}
 	}
-	return uintptr(node.count)
+	return left
 }
 
 func (t *BPTree[T]) splitChild(parent *BPNode[T], index uint16, child *BPNode[T]) {
+	if parent == nil || child == nil || parent.children == nil {
+		return
+	}
+
 	// 創建新節點
 	nodeSize := unsafe.Sizeof(BPNode[T]{}) +
 		(maxKeys * unsafe.Sizeof(uintptr(0))) +
 		(maxKeys * unsafe.Sizeof(unsafe.Pointer(nil))) +
 		(maxChild * unsafe.Sizeof(unsafe.Pointer(nil)))
+
 	newNode := (*BPNode[T])(t.pool.Alloc(nodeSize))
+	if newNode == nil {
+		return
+	}
+
+	// 初始化新節點
+	newNode.keys = unsafe.Add(unsafe.Pointer(newNode), unsafe.Sizeof(BPNode[T]{}))
+	newNode.data = unsafe.Add(newNode.keys, maxKeys*unsafe.Sizeof(uintptr(0)))
+	newNode.children = unsafe.Add(newNode.data, maxKeys*unsafe.Sizeof(unsafe.Pointer(nil)))
 	newNode.isLeaf = child.isLeaf
 	newNode.count = minKeys
 
@@ -190,4 +243,23 @@ func (t *BPTree[T]) splitChild(parent *BPNode[T], index uint16, child *BPNode[T]
 		unsafe.Pointer(newNode)
 
 	parent.count++
+}
+
+func (t *BPTree[T]) Find(key uintptr) (unsafe.Pointer, uintptr) {
+	if t.root == nil {
+		return nil, 0
+	}
+
+	node := (*BPNode[T])(t.root)
+	for !node.isLeaf {
+		pos := t.searchPos(node, key)
+		node = (*BPNode[T])(*(*unsafe.Pointer)(unsafe.Add(node.children, pos*unsafe.Sizeof(unsafe.Pointer(nil)))))
+	}
+
+	pos := t.searchPos(node, key)
+	if pos < uintptr(node.count) {
+		return *(*unsafe.Pointer)(unsafe.Add(node.data, pos*unsafe.Sizeof(unsafe.Pointer(nil)))), pos
+	}
+
+	return nil, 0
 }

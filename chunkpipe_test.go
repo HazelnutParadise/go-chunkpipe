@@ -296,3 +296,38 @@ func TestLargeDataHandling(t *testing.T) {
 		})
 	}
 }
+
+func TestIterators(t *testing.T) {
+	pipe := NewChunkPipe[int]()
+	data := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+	pipe.Push(data)
+
+	t.Run("ValueIterator", func(t *testing.T) {
+		iter := pipe.ValueIter()
+		i := 0
+		for iter.Next() {
+			if got := iter.Value(); got != data[i] {
+				t.Errorf("value at %d = %v, want %v", i, got, data[i])
+			}
+			i++
+		}
+	})
+
+	t.Run("ChunkIterator", func(t *testing.T) {
+		iter := pipe.ChunkIter()
+		total := 0
+		for chunk, ok := iter.Next(); ok; chunk, ok = iter.Next() {
+			total += len(chunk)
+			// 驗證塊內容
+			for i, v := range chunk {
+				if v != data[total-len(chunk)+i] {
+					t.Errorf("chunk value at %d = %v, want %v",
+						i, v, data[total-len(chunk)+i])
+				}
+			}
+		}
+		if total != len(data) {
+			t.Errorf("total items = %d, want %d", total, len(data))
+		}
+	})
+}

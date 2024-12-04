@@ -8,10 +8,11 @@ import (
 // 定義 Chunk 結構，用於存儲任意型別數據塊
 type Chunk[T any] struct {
 	data   unsafe.Pointer // 指向數據的指針
-	size   int            // 數據大小
-	offset int            // 當前讀取位置
+	size   int32          // 數據大小
+	offset int32          // 當前讀取位置
 	next   *Chunk[T]      // 下一個塊的指標
 	prev   *Chunk[T]      // 前一個塊的指標
+	_      [24]byte       // 填充到 64 字節
 }
 
 // 定義 TreeNode 結構，用於索引
@@ -34,6 +35,8 @@ type ChunkPipe[T any] struct {
 	totalSize int
 	validSize int
 	mu        sync.RWMutex
+	cache     sync.Pool  // 對象池
+	bufPool   *sync.Pool // 緩衝區池
 }
 
 // 工廠函數：創建 ChunkPipe
@@ -51,4 +54,26 @@ type alignedChunk[T any] struct {
 	size   int32
 	offset int32
 	_      [56]byte // 填充到 64 字節
+}
+
+// 確保結構體對齊到緩存行
+type alignedNode struct {
+	data unsafe.Pointer
+	next unsafe.Pointer
+	_    [48]byte // 填充到 64 字節
+}
+
+// ValueIterator 提供值迭代器
+type ValueIterator[T any] struct {
+	current *Chunk[T]
+	pos     int32
+	pipe    *ChunkPipe[T]
+}
+
+// ChunkIterator 提供塊迭代器
+type ChunkIterator[T any] struct {
+	current *Chunk[T]
+	pipe    *ChunkPipe[T]
+	minSize int32 // 最小塊大小
+	maxSize int32 // 最大塊大小
 }

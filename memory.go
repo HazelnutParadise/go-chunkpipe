@@ -48,3 +48,12 @@ func (p *MemoryPool) Size() int {
 	defer p.mu.Unlock()
 	return p.size
 }
+
+func (p *MemoryPool) normalAlloc(size uintptr) unsafe.Pointer {
+	block := make([]byte, size)
+	p.mu.Lock()
+	p.blocks = append(p.blocks, block)
+	p.size += len(block)
+	p.mu.Unlock()
+	return unsafe.Pointer(&block[0])
+}

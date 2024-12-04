@@ -14,55 +14,77 @@ func (cl *ChunkPipe[T]) Push(data []T) *ChunkPipe[T] {
 		return cl
 	}
 
-	cl.mu.Lock()
-	defer cl.mu.Unlock()
-
+	// 先分配記憶體並異步複製數據
 	dataLen := len(data)
 	newData := make([]T, dataLen)
 
-	// 使用更快的記憶體複製
 	var zero T
 	elemSize := unsafe.Sizeof(zero)
 	srcPtr := unsafe.Pointer(&data[0])
 	dstPtr := unsafe.Pointer(&newData[0])
 	totalSize := uintptr(dataLen) * elemSize
 
-	if dataLen <= 32 {
-		// 小數據快速路徑
-		// 直接使用 uint64 複製
-		for i := uintptr(0); i < totalSize; i += 8 {
-			*(*uint64)(unsafe.Add(dstPtr, i)) = *(*uint64)(unsafe.Add(srcPtr, i))
+	// 使用多個 goroutine 並行複製大塊數據
+	if totalSize >= 4096 { // 4KB 以上使用並行
+		const chunkSize uintptr = 512 // 每個 goroutine 處理 512 字節
+		numGoroutines := (totalSize + chunkSize - 1) / chunkSize
+		done := make(chan struct{}, numGoroutines)
+
+		for offset := uintptr(0); offset < totalSize; offset += chunkSize {
+			go func(off uintptr) {
+				size := chunkSize
+				if off+size > totalSize {
+					size = totalSize - off
+				}
+
+				// 手動記憶體複製使用 64 字節批次
+				for i := uintptr(0); i < size; i += 64 {
+					if i+64 <= size {
+						*(*[8]uint64)(unsafe.Add(dstPtr, off+i)) =
+							*(*[8]uint64)(unsafe.Add(srcPtr, off+i))
+					} else {
+						// 處理剩餘字節
+						for j := i; j < size; j += 8 {
+							*(*uint64)(unsafe.Add(dstPtr, off+j)) =
+								*(*uint64)(unsafe.Add(srcPtr, off+j))
+						}
+					}
+				}
+				done <- struct{}{}
+			}(offset)
+		}
+
+		// 等待所有複製完成
+		for i := uintptr(0); i < numGoroutines; i++ {
+			<-done
 		}
 	} else {
-		// 128字節對齊複製
-		aligned128 := totalSize &^ 127
-		for i := uintptr(0); i < aligned128; i += 128 {
-			// 展開循環，一次複製 128 字節
-			*(*[16]uint64)(unsafe.Add(dstPtr, i)) = *(*[16]uint64)(unsafe.Add(srcPtr, i))
-		}
-
-		// 64字節對齊複製
+		// 小數據使用 64 字節批次複製
 		aligned64 := totalSize &^ 63
-		for i := aligned128; i < aligned64; i += 64 {
-			*(*[8]uint64)(unsafe.Add(dstPtr, i)) = *(*[8]uint64)(unsafe.Add(srcPtr, i))
+		for i := uintptr(0); i < aligned64; i += 64 {
+			*(*[8]uint64)(unsafe.Add(dstPtr, i)) =
+				*(*[8]uint64)(unsafe.Add(srcPtr, i))
 		}
 
-		// 8字節對齊複製
-		aligned8 := totalSize &^ 7
-		for i := aligned64; i < aligned8; i += 8 {
-			*(*uint64)(unsafe.Add(dstPtr, i)) = *(*uint64)(unsafe.Add(srcPtr, i))
-		}
-
-		// 複製剩餘字節
-		for i := aligned8; i < totalSize; i++ {
-			*(*uint8)(unsafe.Add(dstPtr, i)) = *(*uint8)(unsafe.Add(srcPtr, i))
+		// 處理剩餘字節
+		for i := aligned64; i < totalSize; i += 8 {
+			*(*uint64)(unsafe.Add(dstPtr, i)) =
+				*(*uint64)(unsafe.Add(srcPtr, i))
 		}
 	}
 
+	cl.mu.Lock()
+	defer cl.mu.Unlock()
+
 	block := &Chunk[T]{
 		data:   dstPtr,
-		size:   dataLen,
+		size:   int32(dataLen),
 		offset: 0,
+	}
+
+	// 更新 B+ 樹索引
+	if cl.bptree != nil {
+		cl.bptree.Insert(uintptr(cl.validSize), dstPtr)
 	}
 
 	// 快速路徑
@@ -89,8 +111,8 @@ func (cl *ChunkPipe[T]) insertBlockToTree(block *Chunk[T]) {
 	}
 
 	// 快取常用計算結果
-	blockSize := block.size
-	validSize := blockSize - block.offset
+	blockSize := int(block.size)
+	validSize := int(block.size - block.offset)
 
 	newNode := &TreeNode[T]{
 		sum:       blockSize,
@@ -141,21 +163,31 @@ func (cl *ChunkPipe[T]) Get(index int) (T, bool) {
 		return zero, false
 	}
 
-	// 使用快速路徑
-	if cl.head != nil && index < cl.head.size-cl.head.offset {
+	// 使用 B+ 樹快速定位
+	if cl.bptree != nil {
+		// 使用索引位置作為鍵值
+		data, offset := cl.bptree.Find(uintptr(index))
+		if data != nil {
+			ptr := unsafe.Add(data, offset*unsafe.Sizeof(zero))
+			return *(*T)(ptr), true
+		}
+	}
+
+	// 快速路徑：檢查頭部
+	if cl.head != nil && int(cl.head.size-cl.head.offset) > index {
 		ptr := unsafe.Add(cl.head.data,
-			uintptr(cl.head.offset+index)*unsafe.Sizeof(zero))
+			uintptr(int(cl.head.offset)+index)*unsafe.Sizeof(zero))
 		return *(*T)(ptr), true
 	}
 
-	// 慢路徑
+	// 慢路徑：遍歷鏈表
 	current := cl.head
 	remainingIndex := index
 	for current != nil {
-		validCount := current.size - current.offset
+		validCount := int(current.size - current.offset)
 		if remainingIndex < validCount {
 			ptr := unsafe.Add(current.data,
-				uintptr(current.offset+remainingIndex)*unsafe.Sizeof(zero))
+				uintptr(int(current.offset)+remainingIndex)*unsafe.Sizeof(zero))
 			return *(*T)(ptr), true
 		}
 		remainingIndex -= validCount
@@ -180,7 +212,7 @@ func (cl *ChunkPipe[T]) PopChunkFront() ([]T, bool) {
 	// 快取 size 和 offset
 	size := head.size
 	offset := head.offset
-	validCount := size - offset
+	validCount := int(size - offset)
 
 	if validCount <= 0 {
 		// 移除空塊
@@ -232,7 +264,7 @@ func (cl *ChunkPipe[T]) PopChunkEnd() ([]T, bool) {
 	// 快取 size 和 offset
 	size := tail.size
 	offset := tail.offset
-	validCount := size - offset
+	validCount := int(size - offset)
 
 	if validCount <= 0 {
 		// 移除塊
@@ -376,7 +408,7 @@ func (cl *ChunkPipe[T]) PopEnd() (T, bool) {
 	size := tail.size
 	offset := tail.offset
 
-	// 使用指針計算
+	// 使用指計算
 	ptr := unsafe.Add(tail.data,
 		uintptr(size-1)*unsafe.Sizeof(zero))
 	value := *(*T)(ptr)
@@ -468,41 +500,69 @@ func (cl *ChunkPipe[T]) Range() []T {
 	dstPtr := unsafe.Pointer(&result[0])
 	pos := uintptr(0)
 
-	// 使用更大的批次大小
+	// 使用 B+ 樹進行順序訪問
+	if cl.bptree != nil {
+		// TODO: 實現 B+ 樹的順序遍歷
+		// 這裡需要實現 B+ 樹的葉子節點鏈表遍歷
+	}
+
+	// 使用多個 goroutine 行複製
+	const chunkSize uintptr = 4096
 	for current := cl.head; current != nil; current = current.next {
 		if n := current.size - current.offset; n > 0 {
-			srcPtr := unsafe.Add(current.data, uintptr(current.offset)*elemSize)
 			copySize := uintptr(n) * elemSize
+			if copySize >= chunkSize {
+				// 大塊數據使用並行複製
+				numGoroutines := (copySize + chunkSize - 1) / chunkSize
+				done := make(chan struct{}, numGoroutines)
 
-			// 256字節對齊複製
-			aligned256 := copySize &^ 255
-			for i := uintptr(0); i < aligned256; i += 256 {
-				*(*[32]uint64)(unsafe.Add(dstPtr, pos+i)) = *(*[32]uint64)(unsafe.Add(srcPtr, i))
+				for offset := uintptr(0); offset < copySize; offset += chunkSize {
+					go func(off uintptr) {
+						size := chunkSize
+						if off+size > copySize {
+							size = copySize - off
+						}
+
+						srcPtr := unsafe.Add(current.data,
+							uintptr(current.offset)*elemSize+off)
+
+						// 使用 64 字節批次複製
+						for i := uintptr(0); i < size; i += 64 {
+							if i+64 <= size {
+								*(*[8]uint64)(unsafe.Add(dstPtr, pos+off+i)) =
+									*(*[8]uint64)(unsafe.Add(srcPtr, i))
+							} else {
+								for j := i; j < size; j += 8 {
+									*(*uint64)(unsafe.Add(dstPtr, pos+off+j)) =
+										*(*uint64)(unsafe.Add(srcPtr, j))
+								}
+							}
+						}
+						done <- struct{}{}
+					}(offset)
+				}
+
+				for i := uintptr(0); i < numGoroutines; i++ {
+					<-done
+				}
+			} else {
+				// 小塊數據直接複製
+				srcPtr := unsafe.Add(current.data,
+					uintptr(current.offset)*elemSize)
+
+				// 使用 64 字節批次複製
+				aligned64 := copySize &^ 63
+				for i := uintptr(0); i < aligned64; i += 64 {
+					*(*[8]uint64)(unsafe.Add(dstPtr, pos+i)) =
+						*(*[8]uint64)(unsafe.Add(srcPtr, i))
+				}
+
+				// 處理剩餘字節
+				for i := aligned64; i < copySize; i += 8 {
+					*(*uint64)(unsafe.Add(dstPtr, pos+i)) =
+						*(*uint64)(unsafe.Add(srcPtr, i))
+				}
 			}
-
-			// 128字節對齊複製
-			aligned128 := copySize &^ 127
-			for i := aligned256; i < aligned128; i += 128 {
-				*(*[16]uint64)(unsafe.Add(dstPtr, pos+i)) = *(*[16]uint64)(unsafe.Add(srcPtr, i))
-			}
-
-			// 64字節對齊複製
-			aligned64 := copySize &^ 63
-			for i := aligned128; i < aligned64; i += 64 {
-				*(*[8]uint64)(unsafe.Add(dstPtr, pos+i)) = *(*[8]uint64)(unsafe.Add(srcPtr, i))
-			}
-
-			// 8字節對齊複製
-			aligned8 := copySize &^ 7
-			for i := aligned64; i < aligned8; i += 8 {
-				*(*uint64)(unsafe.Add(dstPtr, pos+i)) = *(*uint64)(unsafe.Add(srcPtr, i))
-			}
-
-			// 複製剩餘字節
-			for i := aligned8; i < copySize; i++ {
-				*(*uint8)(unsafe.Add(dstPtr, pos+i)) = *(*uint8)(unsafe.Add(srcPtr, i))
-			}
-
 			pos += copySize
 		}
 	}
@@ -553,4 +613,169 @@ func (cl *ChunkPipe[T]) RangeValues(fn func(T) bool) {
 			}
 		}
 	}
+}
+
+// 優化並行複製的閾值和批次大小
+const (
+	parallelThreshold = 4096 // 4KB
+	copyBatchSize     = 512  // 512B
+	maxGoroutines     = 32   // 最大 goroutine 數
+)
+
+// 使用工作池優化並行複製
+var copyWorkerPool = make(chan struct{}, maxGoroutines)
+
+func init() {
+	// 初始化工作池
+	for i := 0; i < maxGoroutines; i++ {
+		copyWorkerPool <- struct{}{}
+	}
+}
+
+// ValueSlice 返回所有值的切片
+func (cl *ChunkPipe[T]) ValueSlice() []T {
+	cl.mu.RLock()
+	defer cl.mu.RUnlock()
+
+	if cl.validSize == 0 {
+		return nil
+	}
+
+	result := make([]T, cl.validSize)
+	var zero T
+	elemSize := unsafe.Sizeof(zero)
+	dstPtr := unsafe.Pointer(&result[0])
+	pos := uintptr(0)
+
+	for current := cl.head; current != nil; current = current.next {
+		if n := current.size - current.offset; n > 0 {
+			copySize := uintptr(n) * elemSize
+			srcPtr := unsafe.Add(current.data,
+				uintptr(current.offset)*elemSize)
+
+			// 使用 64 字節批次複製
+			aligned64 := copySize &^ 63
+			for i := uintptr(0); i < aligned64; i += 64 {
+				*(*[8]uint64)(unsafe.Add(dstPtr, pos+i)) =
+					*(*[8]uint64)(unsafe.Add(srcPtr, i))
+			}
+
+			// 處理剩餘字節
+			for i := aligned64; i < copySize; i += 8 {
+				*(*uint64)(unsafe.Add(dstPtr, pos+i)) =
+					*(*uint64)(unsafe.Add(srcPtr, i))
+			}
+			pos += copySize
+		}
+	}
+
+	return result
+}
+
+// ChunkSlice 返回所有數據塊的切片
+func (cl *ChunkPipe[T]) ChunkSlice() [][]T {
+	cl.mu.RLock()
+	defer cl.mu.RUnlock()
+
+	if cl.validSize == 0 {
+		return nil
+	}
+
+	chunks := make([][]T, 0)
+	for current := cl.head; current != nil; current = current.next {
+		if n := current.size - current.offset; n > 0 {
+			chunk := make([]T, n)
+			src := unsafe.Add(current.data,
+				uintptr(current.offset)*unsafe.Sizeof(chunk[0]))
+			srcSlice := unsafe.Slice((*T)(src), n)
+			copy(chunk, srcSlice)
+			chunks = append(chunks, chunk)
+		}
+	}
+
+	return chunks
+}
+
+// ValueIter 返回值迭代器
+func (cl *ChunkPipe[T]) ValueIter() *ValueIterator[T] {
+	// 原來的 Values 方法實現
+	return &ValueIterator[T]{
+		current: cl.head,
+		pos:     0,
+		pipe:    cl,
+	}
+}
+
+// ChunkIter 返回塊迭代器
+func (cl *ChunkPipe[T]) ChunkIter() *ChunkIterator[T] {
+	return &ChunkIterator[T]{
+		current: cl.head,
+		pipe:    cl,
+		minSize: 1024, // 1KB
+		maxSize: 8192, // 8KB
+	}
+}
+
+// Next 移動到下一個值
+func (it *ValueIterator[T]) Next() bool {
+	if it.current == nil {
+		return false
+	}
+
+	it.pos++
+	if int(it.pos) >= int(it.current.size-it.current.offset) {
+		it.current = it.current.next
+		it.pos = 0
+	}
+	return it.current != nil
+}
+
+// Value 返回當前值
+func (it *ValueIterator[T]) Value() T {
+	var zero T
+	if it.current == nil {
+		return zero
+	}
+	ptr := unsafe.Add(it.current.data,
+		uintptr(it.current.offset+it.pos)*unsafe.Sizeof(zero))
+	return *(*T)(ptr)
+}
+
+// Next 移動到下一個塊
+func (it *ChunkIterator[T]) Next() ([]T, bool) {
+	if it.current == nil {
+		return nil, false
+	}
+
+	size := it.current.size
+	offset := it.current.offset
+	if size <= offset {
+		it.current = it.current.next
+		return it.Next()
+	}
+
+	validCount := size - offset
+	if validCount < it.minSize && it.current.next != nil {
+		it.current = it.current.next
+		return it.Next()
+	}
+
+	if validCount > it.maxSize {
+		validCount = it.maxSize
+	}
+
+	// 創建結果切片
+	result := make([]T, validCount)
+	src := unsafe.Add(it.current.data,
+		uintptr(offset)*unsafe.Sizeof(result[0]))
+	srcSlice := unsafe.Slice((*T)(src), validCount)
+	copy(result, srcSlice)
+
+	if validCount >= it.maxSize {
+		it.current.offset += validCount
+	} else {
+		it.current = it.current.next
+	}
+
+	return result, true
 }
