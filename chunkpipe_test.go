@@ -306,7 +306,7 @@ func TestIterators(t *testing.T) {
 		iter := pipe.ValueIter()
 		i := 0
 		for iter.Next() {
-			if got := iter.Value(); got != data[i] {
+			if got := iter.V(); got != data[i] {
 				t.Errorf("value at %d = %v, want %v", i, got, data[i])
 			}
 			i++
@@ -316,7 +316,8 @@ func TestIterators(t *testing.T) {
 	t.Run("ChunkIterator", func(t *testing.T) {
 		iter := pipe.ChunkIter()
 		total := 0
-		for chunk, ok := iter.Next(); ok; chunk, ok = iter.Next() {
+		for iter.Next() {
+			chunk := iter.V()
 			total += len(chunk)
 			// 驗證塊內容
 			for i, v := range chunk {

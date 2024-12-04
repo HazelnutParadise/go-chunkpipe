@@ -716,7 +716,7 @@ func (cl *ChunkPipe[T]) ChunkIter() *ChunkIterator[T] {
 	}
 }
 
-// Next 移動到下一個值
+// ValueIterator 的方法
 func (it *ValueIterator[T]) Next() bool {
 	if it.current == nil {
 		return false
@@ -730,8 +730,7 @@ func (it *ValueIterator[T]) Next() bool {
 	return it.current != nil
 }
 
-// Value 返回當前值
-func (it *ValueIterator[T]) Value() T {
+func (it *ValueIterator[T]) V() T { // 改名：Current -> V
 	var zero T
 	if it.current == nil {
 		return zero
@@ -741,10 +740,10 @@ func (it *ValueIterator[T]) Value() T {
 	return *(*T)(ptr)
 }
 
-// Next 移動到下一個塊
-func (it *ChunkIterator[T]) Next() ([]T, bool) {
+// ChunkIterator 的方法
+func (it *ChunkIterator[T]) Next() bool {
 	if it.current == nil {
-		return nil, false
+		return false
 	}
 
 	size := it.current.size
@@ -764,12 +763,12 @@ func (it *ChunkIterator[T]) Next() ([]T, bool) {
 		validCount = it.maxSize
 	}
 
-	// 創建結果切片
-	result := make([]T, validCount)
+	// 準備當前塊
+	it.chunk = make([]T, validCount)
 	src := unsafe.Add(it.current.data,
-		uintptr(offset)*unsafe.Sizeof(result[0]))
+		uintptr(offset)*unsafe.Sizeof(it.chunk[0]))
 	srcSlice := unsafe.Slice((*T)(src), validCount)
-	copy(result, srcSlice)
+	copy(it.chunk, srcSlice)
 
 	if validCount >= it.maxSize {
 		it.current.offset += validCount
@@ -777,5 +776,9 @@ func (it *ChunkIterator[T]) Next() ([]T, bool) {
 		it.current = it.current.next
 	}
 
-	return result, true
+	return true
+}
+
+func (it *ChunkIterator[T]) V() []T { // 改名：Current -> V
+	return it.chunk
 }

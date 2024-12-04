@@ -76,4 +76,5 @@ type ChunkIterator[T any] struct {
 	pipe    *ChunkPipe[T]
 	minSize int32 // 最小塊大小
 	maxSize int32 // 最大塊大小
+	chunk   []T   // 當前塊
 }
