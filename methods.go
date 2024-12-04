@@ -17,30 +17,8 @@ func (cl *ChunkPipe[T]) Push(data []T) *ChunkPipe[T] {
 	cl.mu.Lock()
 	defer cl.mu.Unlock()
 
-	// 提高小數據優化閾值
-	if len(data) <= 32 {
-		if cl.tail != nil && cl.tail.size-cl.tail.offset < 64 {
-			// 直接在現有塊追加
-			newData := make([]T, cl.tail.size+len(data))
-			copy(newData, unsafe.Slice((*T)(cl.tail.data), cl.tail.size))
-			copy(newData[cl.tail.size:], data)
-
-			cl.tail.data = unsafe.Pointer(&newData[0])
-			cl.tail.size += len(data)
-			cl.totalSize += len(data)
-			cl.validSize += len(data)
-			return cl
-		}
-	}
-
-	// 大數據優化：考慮塊大小
-	blockSize := len(data)
-	if blockSize > 1024 {
-		// 大數據使用更大的塊
-		blockSize = (blockSize + 1023) &^ 1023 // 對齊到1024邊界
-	}
-
-	newData := make([]T, blockSize)
+	// 直接創建新塊
+	newData := make([]T, len(data))
 	copy(newData, data)
 
 	block := &Chunk[T]{
@@ -49,6 +27,7 @@ func (cl *ChunkPipe[T]) Push(data []T) *ChunkPipe[T] {
 		offset: 0,
 	}
 
+	// 更新鏈表
 	if cl.tail != nil {
 		cl.tail.next = block
 		block.prev = cl.tail
@@ -341,35 +320,20 @@ func (cl *ChunkPipe[T]) Range() []T {
 	cl.mu.RLock()
 	defer cl.mu.RUnlock()
 
-	totalSize := cl.validSize
-	if totalSize == 0 {
+	if cl.validSize == 0 {
 		return nil
 	}
 
-	// 預分配精確大小的切片
-	result := make([]T, 0, totalSize)
+	// 預分配完整大小避免成長
+	result := make([]T, 0, cl.validSize)
 
 	// 使用更大的批次大小
-	const batchSize = 64
-	buffer := make([]T, batchSize)
-
+	const batchSize = 128
 	current := cl.head
 	for current != nil {
 		if current.size > current.offset {
-			basePtr := unsafe.Add(current.data,
-				uintptr(current.offset)*unsafe.Sizeof(*(*T)(current.data)))
-			remaining := current.size - current.offset
-
-			// 批量複製
-			for i := 0; i < remaining; i += batchSize {
-				n := batchSize
-				if i+n > remaining {
-					n = remaining - i
-				}
-				src := unsafe.Slice((*T)(unsafe.Add(basePtr, uintptr(i)*unsafe.Sizeof(*(*T)(basePtr)))), n)
-				copy(buffer[:n], src)
-				result = append(result, buffer[:n]...)
-			}
+			slice := unsafe.Slice((*T)(current.data), current.size)
+			result = append(result, slice[current.offset:]...)
 		}
 		current = current.next
 	}
