@@ -7,14 +7,14 @@ import (
 
 // 基準測試：插入操作
 func BenchmarkPush(b *testing.B) {
-	sizes := []int{10, 100, 1000, 10000}
+	sizes := []int{10, 100, 1000, 10000, 100000, 1000000}
 	for _, size := range sizes {
 		data := make([]byte, size)
 		for i := range data {
 			data[i] = byte(i % 256)
 		}
 
-		b.Run("ChunkPipe-"+string(rune(size)), func(b *testing.B) {
+		b.Run(fmt.Sprintf("ChunkPipe-%d", size), func(b *testing.B) {
 			cp := NewChunkPipe[byte]()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
@@ -22,7 +22,7 @@ func BenchmarkPush(b *testing.B) {
 			}
 		})
 
-		b.Run("Slice-"+string(rune(size)), func(b *testing.B) {
+		b.Run(fmt.Sprintf("Slice-%d", size), func(b *testing.B) {
 			var slice []byte
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
@@ -256,4 +256,43 @@ func BenchmarkRangeOptimized(b *testing.B) {
 		}
 	})
 
+}
+
+// 增加新的測試案例
+func TestLargeDataHandling(t *testing.T) {
+	sizes := []int{1 << 10, 1 << 15, 1 << 20} // 1KB, 32KB, 1MB
+
+	for _, size := range sizes {
+		t.Run(fmt.Sprintf("Size-%d", size), func(t *testing.T) {
+			cp := NewChunkPipe[byte]()
+			data := make([]byte, size)
+
+			// 填充測試資料
+			for i := range data {
+				data[i] = byte(i % 256)
+			}
+
+			// 測試推送
+			cp.Push(data)
+
+			// 驗證大小
+			if cp.validSize != size {
+				t.Errorf("Expected size %d, got %d", size, cp.validSize)
+			}
+
+			// 測試讀取
+			result := cp.Range()
+			if len(result) != size {
+				t.Errorf("Expected length %d, got %d", size, len(result))
+			}
+
+			// 驗證資料正確性
+			for i := 0; i < size; i++ {
+				if result[i] != data[i] {
+					t.Errorf("Data mismatch at index %d", i)
+					break
+				}
+			}
+		})
+	}
 }

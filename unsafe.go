@@ -2,16 +2,6 @@ package chunkpipe
 
 import (
 	"unsafe"
-	_ "unsafe"
-)
-
-// Memory protection constants
-const (
-	PROT_READ  = 0x1
-	PROT_WRITE = 0x2
-
-	MAP_PRIVATE = 0x2
-	MAP_ANON    = 0x20
 )
 
 //go:linkname memmove runtime.memmove
@@ -29,11 +19,18 @@ func (p *MemoryPool) numaAlloc(size uintptr) unsafe.Pointer {
 	cpu := getcpu()
 	node := cpu >> 3 // 假設每個 NUMA 節點有 8 個核心
 
-	// 在特定 NUMA 節點上分配記憶體
-	addr, _ := mmap(0, size,
+	// 使用系統呼叫介面分配記憶體
+	addr, err := defaultSysCaller.mmap(0, size,
 		PROT_READ|PROT_WRITE,
 		MAP_PRIVATE|MAP_ANON|
 			int(node)<<24, // NUMA 節點選擇
 		-1, 0)
+
+	if err != nil {
+		// 失敗時使用標準分配
+		mem := make([]byte, size)
+		return unsafe.Pointer(&mem[0])
+	}
+
 	return unsafe.Pointer(addr)
 }
