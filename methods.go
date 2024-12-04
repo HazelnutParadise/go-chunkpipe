@@ -17,31 +17,30 @@ func (cl *ChunkPipe[T]) Push(data []T) *ChunkPipe[T] {
 	cl.mu.Lock()
 	defer cl.mu.Unlock()
 
-	// 小數據優化
-	if len(data) <= 16 {
-		if cl.tail != nil && cl.tail.size-cl.tail.offset < 32 {
-			// 創建新的內存空間
-			newSize := cl.tail.size + len(data)
-			newData := make([]T, newSize)
-
-			// 複製現有數據
-			oldSlice := unsafe.Slice((*T)(cl.tail.data), cl.tail.size)
-			copy(newData, oldSlice)
-
-			// 複製新數據
+	// 提高小數據優化閾值
+	if len(data) <= 32 {
+		if cl.tail != nil && cl.tail.size-cl.tail.offset < 64 {
+			// 直接在現有塊追加
+			newData := make([]T, cl.tail.size+len(data))
+			copy(newData, unsafe.Slice((*T)(cl.tail.data), cl.tail.size))
 			copy(newData[cl.tail.size:], data)
 
-			// 更新塊信息
 			cl.tail.data = unsafe.Pointer(&newData[0])
-			cl.tail.size = newSize
+			cl.tail.size += len(data)
 			cl.totalSize += len(data)
 			cl.validSize += len(data)
 			return cl
 		}
 	}
 
-	// 大數據處理
-	newData := make([]T, len(data))
+	// 大數據優化：考慮塊大小
+	blockSize := len(data)
+	if blockSize > 1024 {
+		// 大數據使用更大的塊
+		blockSize = (blockSize + 1023) &^ 1023 // 對齊到1024邊界
+	}
+
+	newData := make([]T, blockSize)
 	copy(newData, data)
 
 	block := &Chunk[T]{
@@ -222,26 +221,34 @@ func (cl *ChunkPipe[T]) PopFront() (T, bool) {
 		return zero, false
 	}
 
-	block := cl.head
-	if block.offset >= block.size {
-		cl.removeHead()
-		return zero, false
-	}
+	// 批量優化：當剩餘數據較少時，合併塊
+	if cl.head.size-cl.head.offset < 32 && cl.head.next != nil {
+		// 合併當前塊和下一個塊
+		nextBlock := cl.head.next
+		newData := make([]T, cl.head.size-cl.head.offset+nextBlock.size)
 
-	// 批量讀取優化
-	ptr := unsafe.Add(block.data, uintptr(block.offset)*unsafe.Sizeof(*(*T)(block.data)))
-	value := *(*T)(ptr)
+		// 使用 unsafe.Slice 創建切片視圖
+		oldSlice := unsafe.Slice((*T)(cl.head.data), cl.head.size)
+		nextSlice := unsafe.Slice((*T)(nextBlock.data), nextBlock.size)
 
-	block.offset++
-	cl.validSize--
-	cl.totalSize--
+		copy(newData, oldSlice[cl.head.offset:])
+		copy(newData[cl.head.size-cl.head.offset:], nextSlice)
 
-	// 優化塊移除邏輯
-	if block.offset >= block.size-32 { // 提高閾值
-		if block.offset >= block.size {
-			cl.removeHead()
+		cl.head = &Chunk[T]{
+			data: unsafe.Pointer(&newData[0]),
+			size: len(newData),
+			next: nextBlock.next,
+		}
+		if nextBlock.next != nil {
+			nextBlock.next.prev = cl.head
 		}
 	}
+
+	// 快速路徑
+	value := *(*T)(unsafe.Add(cl.head.data, uintptr(cl.head.offset)*unsafe.Sizeof(zero)))
+	cl.head.offset++
+	cl.validSize--
+	cl.totalSize--
 
 	return value, true
 }
