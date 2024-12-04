@@ -17,52 +17,53 @@ func (cl *ChunkPipe[T]) Push(data []T) *ChunkPipe[T] {
 	cl.mu.Lock()
 	defer cl.mu.Unlock()
 
-	// 小數據優化
-	if len(data) <= 64 {
-		newData := make([]T, len(data))
-		// 使用 memmove 替代循環
-		memmove(unsafe.Pointer(&newData[0]),
-			unsafe.Pointer(&data[0]),
-			uintptr(len(data))*unsafe.Sizeof(data[0]))
+	// 直接分配並手動對齊複製
+	dataLen := len(data)
+	newData := make([]T, dataLen)
 
-		block := &Chunk[T]{
-			data:   unsafe.Pointer(&newData[0]),
-			size:   len(data),
-			offset: 0,
-		}
-		if cl.tail == nil {
-			cl.head = block
-			cl.tail = block
-		} else {
-			block.prev = cl.tail
-			cl.tail.next = block
-			cl.tail = block
-		}
-		cl.totalSize += len(data)
-		cl.validSize += len(data)
-		return cl
+	// 手動對齊複製
+	var zero T
+	elemSize := unsafe.Sizeof(zero)
+	srcPtr := unsafe.Pointer(&data[0])
+	dstPtr := unsafe.Pointer(&newData[0])
+
+	// 確保 8 字節對齊
+	alignedSize := (uintptr(dataLen) * elemSize) &^ 7
+	for i := uintptr(0); i < alignedSize; i += 8 {
+		*(*uint64)(unsafe.Add(dstPtr, i)) = *(*uint64)(unsafe.Add(srcPtr, i))
 	}
 
-	// 大數據使用 copy
-	newData := make([]T, len(data))
-	copy(newData, data)
+	// 複製剩餘字節
+	for i := alignedSize; i < uintptr(dataLen)*elemSize; i++ {
+		*(*uint8)(unsafe.Add(dstPtr, i)) = *(*uint8)(unsafe.Add(srcPtr, i))
+	}
 
+	// 使用局部變數減少結構體訪問
+	tail := cl.tail
 	block := &Chunk[T]{
-		data:   unsafe.Pointer(&newData[0]),
-		size:   len(data),
+		data:   dstPtr,
+		size:   dataLen,
 		offset: 0,
 	}
 
-	if cl.tail == nil {
+	// 快速路徑：空鏈表
+	if tail == nil {
 		cl.head = block
 		cl.tail = block
-	} else {
-		block.prev = cl.tail
-		cl.tail.next = block
-		cl.tail = block
+
+		cl.totalSize = dataLen
+		cl.validSize = dataLen
+		return cl
 	}
-	cl.totalSize += len(data)
-	cl.validSize += len(data)
+
+	// 快速路徑：追加到尾部
+	block.prev = tail
+	tail.next = block
+	cl.tail = block
+
+	// 一次性更新計數
+	cl.totalSize += dataLen
+	cl.validSize += dataLen
 	return cl
 }
 
@@ -262,19 +263,24 @@ func (cl *ChunkPipe[T]) PopFront() (T, bool) {
 		return zero, false
 	}
 
-	// 直接讀取並更新
-	value := *(*T)(unsafe.Add(head.data,
-		uintptr(head.offset)*unsafe.Sizeof(zero)))
+	// 直接讀取
+	elemSize := unsafe.Sizeof(zero)
+	ptr := unsafe.Add(head.data, uintptr(head.offset)*elemSize)
+	value := *(*T)(ptr)
+
+	// 快速更新
 	head.offset++
 	cl.validSize--
 	cl.totalSize--
 
-	// 快速檢查是否需要移除塊
+	// 快速檢查塊狀態
 	if head.offset >= head.size {
-		cl.head = head.next
-		if cl.head != nil {
-			cl.head.prev = nil
+		next := head.next
+		if next != nil {
+			next.prev = nil
+			cl.head = next
 		} else {
+			cl.head = nil
 			cl.tail = nil
 		}
 	}
@@ -398,7 +404,7 @@ func (cl *ChunkPipe[T]) RangeChunk() <-chan []T {
 				continue
 			}
 
-			// 計算有效數據��小
+			// 計算有效數據小
 			validCount := size - offset
 			batchSize := validCount
 			if batchSize > maxBatchSize {
