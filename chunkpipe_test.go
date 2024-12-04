@@ -234,3 +234,26 @@ func BenchmarkMixedOperations(b *testing.B) {
 		}
 	})
 }
+
+// 基準測試：優化遍歷操作
+func BenchmarkRangeOptimized(b *testing.B) {
+	size := 1000
+	data := make([]byte, size)
+	for i := range data {
+		data[i] = byte(i % 256)
+	}
+
+	b.Run("Range-ForRange", func(b *testing.B) {
+		cp := NewChunkPipe[byte]()
+		cp.Push(data)
+		b.ResetTimer()
+
+		for i := 0; i < b.N; i++ {
+			sum := byte(0)
+			for _, v := range cp.Range() {
+				sum += v
+			}
+		}
+	})
+
+}

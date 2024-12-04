@@ -170,7 +170,7 @@ func (cl *ChunkPipe[T]) PopChunkEnd() ([]T, bool) {
 	block := cl.tail
 	validCount := block.size - block.offset
 	if validCount <= 0 {
-		// 移除��塊
+		// 移除塊
 		cl.tail = block.prev
 		if cl.tail != nil {
 			cl.tail.next = nil
@@ -180,7 +180,7 @@ func (cl *ChunkPipe[T]) PopChunkEnd() ([]T, bool) {
 		return nil, false
 	}
 
-	// 創建新的切片並安全複製數據
+	// 創建新的切片並安全複製數
 	newData := make([]T, validCount)
 	if block.data != nil {
 		src := unsafe.Slice((*T)(block.data), block.size)
@@ -321,48 +321,80 @@ func (cl *ChunkPipe[T]) RangeChunk() <-chan []T {
 	return ch
 }
 
-// 新增高性能的單元素 Range 方法
-func (cl *ChunkPipe[T]) Range() <-chan T {
-	ch := make(chan T, 65536) // 更大的緩衝區
-	go func() {
-		cl.mu.RLock()
-		defer cl.mu.RUnlock()
+// Range 返回一個支持 for range 的迭代器
+func (cl *ChunkPipe[T]) Range() []T {
+	cl.mu.RLock()
+	defer cl.mu.RUnlock()
 
-		// 預分配緩衝區
-		buffer := make([]T, 64)
-		bufIdx := 0
+	// 計算總有效大小
+	totalSize := cl.validSize
+	if totalSize == 0 {
+		return nil
+	}
 
-		current := cl.head
-		for current != nil {
-			if current.size > current.offset {
-				basePtr := current.data
-				elementSize := unsafe.Sizeof(*(*T)(basePtr))
+	// 創建結果切片
+	result := make([]T, 0, totalSize)
 
-				// 使用緩衝區批量處理
-				for i := current.offset; i < current.size; i++ {
-					ptr := unsafe.Add(basePtr, uintptr(i)*elementSize)
-					buffer[bufIdx] = *(*T)(ptr)
-					bufIdx++
+	// 遍歷所有塊
+	current := cl.head
+	for current != nil {
+		if current.size > current.offset {
+			// Fix: Separate the pointer arithmetic from the type conversion
+			basePtr := unsafe.Add(current.data,
+				uintptr(current.offset)*unsafe.Sizeof(*(*T)(current.data)))
+			slice := unsafe.Slice((*T)(basePtr), current.size-current.offset)
 
-					// 當緩衝區滿時，批量發送
-					if bufIdx == 64 {
-						// 一次性複製到通道
-						for _, v := range buffer {
-							ch <- v
-						}
-						bufIdx = 0
-					}
+			// 追加到結果中
+			result = append(result, slice...)
+		}
+		current = current.next
+	}
+
+	return result
+}
+
+// RangeValues 提一個優化的類型安全遍歷接口
+func (cl *ChunkPipe[T]) RangeValues(fn func(T) bool) {
+	cl.mu.RLock()
+	defer cl.mu.RUnlock()
+
+	current := cl.head
+	for current != nil {
+		if current.size > current.offset {
+			// 創建一次性切片視圖
+			slice := unsafe.Slice((*T)(current.data), current.size)
+
+			// 使用 CPU 友好的步長
+			const batchSize = 16
+
+			// 主循環：批量處理
+			i := current.offset
+			for ; i+batchSize <= current.size; i += batchSize {
+				// 預取下一批數據
+				if i+batchSize*2 <= current.size {
+					_ = slice[i+batchSize]
+				}
+
+				// 展開循環以提高指令級並行性
+				if !fn(slice[i]) || !fn(slice[i+1]) ||
+					!fn(slice[i+2]) || !fn(slice[i+3]) ||
+					!fn(slice[i+4]) || !fn(slice[i+5]) ||
+					!fn(slice[i+6]) || !fn(slice[i+7]) ||
+					!fn(slice[i+8]) || !fn(slice[i+9]) ||
+					!fn(slice[i+10]) || !fn(slice[i+11]) ||
+					!fn(slice[i+12]) || !fn(slice[i+13]) ||
+					!fn(slice[i+14]) || !fn(slice[i+15]) {
+					return
 				}
 			}
-			current = current.next
-		}
 
-		// 發送剩餘的數據
-		for i := 0; i < bufIdx; i++ {
-			ch <- buffer[i]
+			// 處理剩餘元素
+			for ; i < current.size; i++ {
+				if !fn(slice[i]) {
+					return
+				}
+			}
 		}
-
-		close(ch)
-	}()
-	return ch
+		current = current.next
+	}
 }
