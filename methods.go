@@ -5,6 +5,9 @@ import (
 	_ "unsafe"
 )
 
+//go:linkname typedmemmove runtime.typedmemmove
+func typedmemmove(typ unsafe.Pointer, dst, src unsafe.Pointer, len int)
+
 // 插入數據到 ChunkPipe，支援泛型和鏈式呼叫
 func (cl *ChunkPipe[T]) Push(data []T) *ChunkPipe[T] {
 	if len(data) == 0 {
@@ -14,28 +17,36 @@ func (cl *ChunkPipe[T]) Push(data []T) *ChunkPipe[T] {
 	cl.mu.Lock()
 	defer cl.mu.Unlock()
 
-	// 小數據優化（<=64 字節）
-	if len(data) <= 8 {
-		if cl.tail != nil && cl.tail.size-cl.tail.offset < 16 {
-			// 直接寫入尾部，避免新塊分配
-			ptr := unsafe.Add(cl.tail.data, uintptr(cl.tail.size)*unsafe.Sizeof(data[0]))
-			for i := range data {
-				*(*T)(unsafe.Add(ptr, uintptr(i)*unsafe.Sizeof(data[0]))) = data[i]
-			}
-			cl.tail.size += len(data)
+	// 小數據優化
+	if len(data) <= 16 {
+		if cl.tail != nil && cl.tail.size-cl.tail.offset < 32 {
+			// 創建新的內存空間
+			newSize := cl.tail.size + len(data)
+			newData := make([]T, newSize)
+
+			// 複製現有數據
+			oldSlice := unsafe.Slice((*T)(cl.tail.data), cl.tail.size)
+			copy(newData, oldSlice)
+
+			// 複製新數據
+			copy(newData[cl.tail.size:], data)
+
+			// 更新塊信息
+			cl.tail.data = unsafe.Pointer(&newData[0])
+			cl.tail.size = newSize
 			cl.totalSize += len(data)
 			cl.validSize += len(data)
 			return cl
 		}
 	}
 
-	// 大數據優化
-	dataPtr := unsafe.Pointer(&data[0])
-	dataSize := len(data)
+	// 大數據處理
+	newData := make([]T, len(data))
+	copy(newData, data)
 
 	block := &Chunk[T]{
-		data:   dataPtr,
-		size:   dataSize,
+		data:   unsafe.Pointer(&newData[0]),
+		size:   len(data),
 		offset: 0,
 	}
 
@@ -47,8 +58,8 @@ func (cl *ChunkPipe[T]) Push(data []T) *ChunkPipe[T] {
 	}
 	cl.tail = block
 
-	cl.totalSize += dataSize
-	cl.validSize += dataSize
+	cl.totalSize += len(data)
+	cl.validSize += len(data)
 	return cl
 }
 
@@ -213,16 +224,11 @@ func (cl *ChunkPipe[T]) PopFront() (T, bool) {
 
 	block := cl.head
 	if block.offset >= block.size {
-		cl.head = block.next
-		if cl.head != nil {
-			cl.head.prev = nil
-		} else {
-			cl.tail = nil
-		}
+		cl.removeHead()
 		return zero, false
 	}
 
-	// 直接記憶體訪問
+	// 批量讀取優化
 	ptr := unsafe.Add(block.data, uintptr(block.offset)*unsafe.Sizeof(*(*T)(block.data)))
 	value := *(*T)(ptr)
 
@@ -230,22 +236,24 @@ func (cl *ChunkPipe[T]) PopFront() (T, bool) {
 	cl.validSize--
 	cl.totalSize--
 
-	// 快速路徑：如果塊還有很多數據，不移除它
-	if block.offset < block.size-8 {
-		return value, true
-	}
-
-	// 慢路徑：塊即將用完，考慮移除
-	if block.offset >= block.size {
-		cl.head = block.next
-		if cl.head != nil {
-			cl.head.prev = nil
-		} else {
-			cl.tail = nil
+	// 優化塊移除邏輯
+	if block.offset >= block.size-32 { // 提高閾值
+		if block.offset >= block.size {
+			cl.removeHead()
 		}
 	}
 
 	return value, true
+}
+
+// 抽取共用邏輯
+func (cl *ChunkPipe[T]) removeHead() {
+	cl.head = cl.head.next
+	if cl.head != nil {
+		cl.head.prev = nil
+	} else {
+		cl.tail = nil
+	}
 }
 
 func (cl *ChunkPipe[T]) PopEnd() (T, bool) {
@@ -326,26 +334,35 @@ func (cl *ChunkPipe[T]) Range() []T {
 	cl.mu.RLock()
 	defer cl.mu.RUnlock()
 
-	// 計算總有效大小
 	totalSize := cl.validSize
 	if totalSize == 0 {
 		return nil
 	}
 
-	// 創建結果切片
+	// 預分配精確大小的切片
 	result := make([]T, 0, totalSize)
 
-	// 遍歷所有塊
+	// 使用更大的批次大小
+	const batchSize = 64
+	buffer := make([]T, batchSize)
+
 	current := cl.head
 	for current != nil {
 		if current.size > current.offset {
-			// Fix: Separate the pointer arithmetic from the type conversion
 			basePtr := unsafe.Add(current.data,
 				uintptr(current.offset)*unsafe.Sizeof(*(*T)(current.data)))
-			slice := unsafe.Slice((*T)(basePtr), current.size-current.offset)
+			remaining := current.size - current.offset
 
-			// 追加到結果中
-			result = append(result, slice...)
+			// 批量複製
+			for i := 0; i < remaining; i += batchSize {
+				n := batchSize
+				if i+n > remaining {
+					n = remaining - i
+				}
+				src := unsafe.Slice((*T)(unsafe.Add(basePtr, uintptr(i)*unsafe.Sizeof(*(*T)(basePtr)))), n)
+				copy(buffer[:n], src)
+				result = append(result, buffer[:n]...)
+			}
 		}
 		current = current.next
 	}
