@@ -208,27 +208,32 @@ func (cl *ChunkPipe[T]) PopFront() (T, bool) {
 	cl.mu.Lock()
 	defer cl.mu.Unlock()
 
-	// 快取經常使用的變數
+	// 快取所有常用變數
 	head := cl.head
 	validSize := cl.validSize
-
 	if head == nil || validSize == 0 {
 		return zero, false
 	}
 
+	// 快取 offset 和 size
+	offset := head.offset
+	size := head.size
+
 	// 快速路徑
 	value := *(*T)(unsafe.Add(head.data,
-		uintptr(head.offset)*unsafe.Sizeof(zero)))
+		uintptr(offset)*unsafe.Sizeof(zero)))
 
-	head.offset++
+	offset++
+	head.offset = offset
 	cl.validSize--
 	cl.totalSize--
 
 	// 如果當前塊已空，移除它
-	if head.offset >= head.size {
-		cl.head = head.next
-		if head.next != nil {
-			head.next.prev = nil
+	if offset >= size {
+		next := head.next
+		cl.head = next
+		if next != nil {
+			next.prev = nil
 		} else {
 			cl.tail = nil
 		}
@@ -344,43 +349,44 @@ func (cl *ChunkPipe[T]) RangeValues(fn func(T) bool) {
 	cl.mu.RLock()
 	defer cl.mu.RUnlock()
 
-	current := cl.head
-	for current != nil {
-		if current.size > current.offset {
-			// 創建一次性切片視圖
-			slice := unsafe.Slice((*T)(current.data), current.size)
+	// 快取常用變數
+	head := cl.head
+	if head == nil {
+		return
+	}
 
-			// 使用 CPU 友好的步長
-			const batchSize = 16
+	const batchSize = 32 // 增加批次大小
 
-			// 主循環：批量處理
-			i := current.offset
-			for ; i+batchSize <= current.size; i += batchSize {
-				// 預取下一批數據
-				if i+batchSize*2 <= current.size {
-					_ = slice[i+batchSize]
-				}
+	for current := head; current != nil; current = current.next {
+		if current.size <= current.offset {
+			continue
+		}
 
-				// 展開循環以提高指令級並行性
-				if !fn(slice[i]) || !fn(slice[i+1]) ||
-					!fn(slice[i+2]) || !fn(slice[i+3]) ||
-					!fn(slice[i+4]) || !fn(slice[i+5]) ||
-					!fn(slice[i+6]) || !fn(slice[i+7]) ||
-					!fn(slice[i+8]) || !fn(slice[i+9]) ||
-					!fn(slice[i+10]) || !fn(slice[i+11]) ||
-					!fn(slice[i+12]) || !fn(slice[i+13]) ||
-					!fn(slice[i+14]) || !fn(slice[i+15]) {
-					return
-				}
+		// 創建一次性切片視圖
+		slice := unsafe.Slice((*T)(current.data), current.size)
+		offset := current.offset
+		size := current.size
+
+		// 主循環：批量處理
+		for i := offset; i+batchSize <= size; i += batchSize {
+			// 預取下一批數據
+			if i+batchSize*2 <= size {
+				_ = slice[i+batchSize]
 			}
 
-			// 處理剩餘元素
-			for ; i < current.size; i++ {
-				if !fn(slice[i]) {
+			// 展開循環
+			for j := 0; j < batchSize; j++ {
+				if !fn(slice[i+j]) {
 					return
 				}
 			}
 		}
-		current = current.next
+
+		// 處理剩餘元素
+		for i := size - (size-offset)%batchSize; i < size; i++ {
+			if !fn(slice[i]) {
+				return
+			}
+		}
 	}
 }
