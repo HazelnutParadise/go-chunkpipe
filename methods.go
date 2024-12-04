@@ -120,17 +120,24 @@ func (cl *ChunkPipe[T]) PopChunkFront() ([]T, bool) {
 	cl.mu.Lock()
 	defer cl.mu.Unlock()
 
-	if cl.head == nil || cl.validSize == 0 {
+	// 快取常用變數
+	head := cl.head
+	validSize := cl.validSize
+	if head == nil || validSize == 0 {
 		return nil, false
 	}
 
-	block := cl.head
-	validCount := block.size - block.offset
+	// 快取 size 和 offset
+	size := head.size
+	offset := head.offset
+	validCount := size - offset
+
 	if validCount <= 0 {
 		// 移除空塊
-		cl.head = block.next
-		if cl.head != nil {
-			cl.head.prev = nil
+		next := head.next
+		cl.head = next
+		if next != nil {
+			next.prev = nil
 		} else {
 			cl.tail = nil
 		}
@@ -139,20 +146,21 @@ func (cl *ChunkPipe[T]) PopChunkFront() ([]T, bool) {
 
 	// 創建新的切片並安全複製數據
 	newData := make([]T, validCount)
-	if block.data != nil {
-		src := unsafe.Slice((*T)(block.data), block.size)
-		copy(newData, src[block.offset:])
+	if head.data != nil {
+		src := unsafe.Slice((*T)(head.data), size)
+		copy(newData, src[offset:])
 	}
 
 	// 更新鏈表
-	cl.head = block.next
-	if cl.head != nil {
-		cl.head.prev = nil
+	next := head.next
+	cl.head = next
+	if next != nil {
+		next.prev = nil
 	} else {
 		cl.tail = nil
 	}
 
-	// 新計數
+	// 更新計數
 	cl.totalSize -= validCount
 	cl.validSize -= validCount
 
@@ -164,34 +172,42 @@ func (cl *ChunkPipe[T]) PopChunkEnd() ([]T, bool) {
 	cl.mu.Lock()
 	defer cl.mu.Unlock()
 
-	if cl.tail == nil || cl.validSize == 0 {
+	// 快取常用變數
+	tail := cl.tail
+	validSize := cl.validSize
+	if tail == nil || validSize == 0 {
 		return nil, false
 	}
 
-	block := cl.tail
-	validCount := block.size - block.offset
+	// 快取 size 和 offset
+	size := tail.size
+	offset := tail.offset
+	validCount := size - offset
+
 	if validCount <= 0 {
 		// 移除塊
-		cl.tail = block.prev
-		if cl.tail != nil {
-			cl.tail.next = nil
+		prev := tail.prev
+		cl.tail = prev
+		if prev != nil {
+			prev.next = nil
 		} else {
 			cl.head = nil
 		}
 		return nil, false
 	}
 
-	// 創建新的切片並安全複製數
+	// 創建新的切片並安全複製數據
 	newData := make([]T, validCount)
-	if block.data != nil {
-		src := unsafe.Slice((*T)(block.data), block.size)
-		copy(newData, src[block.offset:])
+	if tail.data != nil {
+		src := unsafe.Slice((*T)(tail.data), size)
+		copy(newData, src[offset:])
 	}
 
 	// 更新鏈表
-	cl.tail = block.prev
-	if cl.tail != nil {
-		cl.tail.next = nil
+	prev := tail.prev
+	cl.tail = prev
+	if prev != nil {
+		prev.next = nil
 	} else {
 		cl.head = nil
 	}
@@ -257,23 +273,32 @@ func (cl *ChunkPipe[T]) PopEnd() (T, bool) {
 	cl.mu.Lock()
 	defer cl.mu.Unlock()
 
-	if cl.tail == nil || cl.validSize == 0 {
+	// 快取常用變數
+	tail := cl.tail
+	validSize := cl.validSize
+	if tail == nil || validSize == 0 {
 		return zero, false
 	}
 
-	block := cl.tail
+	// 快取 size 和 offset
+	size := tail.size
+	offset := tail.offset
+
 	// 使用指針計算
-	ptr := unsafe.Add(block.data, uintptr(block.size-1)*unsafe.Sizeof(*(*T)(block.data)))
+	ptr := unsafe.Add(tail.data,
+		uintptr(size-1)*unsafe.Sizeof(zero))
 	value := *(*T)(ptr)
 
-	block.size--
+	size--
+	tail.size = size
 	cl.validSize--
 	cl.totalSize--
 
-	if block.size <= block.offset {
-		cl.tail = block.prev
-		if cl.tail != nil {
-			cl.tail.next = nil
+	if size <= offset {
+		prev := tail.prev
+		cl.tail = prev
+		if prev != nil {
+			prev.next = nil
 		} else {
 			cl.head = nil
 		}
