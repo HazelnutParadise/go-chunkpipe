@@ -15,23 +15,17 @@ func (cl *ChunkPipe[T]) Push(data []T) *ChunkPipe[T] {
 	}
 
 	dataLen := len(data)
-	// 小數據快速路徑 (<=128 bytes)
-	if dataLen <= 16 {
-		cl.mu.Lock()
-		defer cl.mu.Unlock()
+	// 小數據快速路徑 (<=32 bytes)
+	if dataLen <= 4 {
+		cl.pushMu.Lock()
+		defer cl.pushMu.Unlock()
 
-		newData := make([]T, dataLen)
-		// 直接複製，不使用 goroutine
-		var zero T
-		elemSize := unsafe.Sizeof(zero)
-		srcPtr := unsafe.Pointer(&data[0])
-		dstPtr := unsafe.Pointer(&newData[0])
-
-		// 使用 SIMD 指令
-		simdCopy(dstPtr, srcPtr, uintptr(dataLen)*elemSize)
+		// 使用堆棧分配
+		var stackData [4]T
+		copy(stackData[:], data)
 
 		block := &Chunk[T]{
-			data:   dstPtr,
+			data:   unsafe.Pointer(&stackData[0]),
 			size:   int32(dataLen),
 			offset: 0,
 		}
@@ -255,42 +249,30 @@ func (cl *ChunkPipe[T]) PopChunkEnd() ([]T, bool) {
 
 func (cl *ChunkPipe[T]) PopFront() (T, bool) {
 	var zero T
-	cl.mu.Lock()
-	defer cl.mu.Unlock()
+	cl.popMu.Lock()
+	defer cl.popMu.Unlock()
 
 	head := cl.head
 	if head == nil || cl.validSize == 0 {
 		return zero, false
 	}
 
-	// 直接使用指針操作
-	elemSize := unsafe.Sizeof(zero)
-	ptr := unsafe.Add(head.data, uintptr(head.offset)*elemSize)
-	value := *(*T)(ptr)
-
-	// 使用位運算更新
+	// 快速路徑：直接讀取並更新 offset
+	value := *(*T)(unsafe.Add(head.data, uintptr(head.offset)*unsafe.Sizeof(zero)))
 	head.offset++
 	cl.validSize--
 	cl.totalSize--
 
-	// 使用更多的位運算和預取
-	if i := uintptr(head.offset); (i | uintptr(head.size)) >= uintptr(head.size) {
-		// 預取下一個塊
-		if next := head.next; next != nil {
-			_ = next.data
-		}
-		// 快速路徑
-		next := head.next
-		if next != nil {
-			next.prev = nil
-			cl.head = next
+	// 只在必要時更新鏈表
+	if head.offset >= head.size {
+		cl.head = head.next
+		if cl.head != nil {
+			cl.head.prev = nil
 		} else {
-			cl.head = nil
 			cl.tail = nil
 		}
-		// 清理指針
-		head.next = nil
-		head.prev = nil
+		// 回收塊
+		globalBlockCache.put((*Chunk[byte])(unsafe.Pointer(head)))
 	}
 
 	return value, true
@@ -546,4 +528,50 @@ func (it *ChunkIterator[T]) Next() bool {
 
 func (it *ChunkIterator[T]) V() []T {
 	return it.chunk
+}
+
+// 添加批量操作方法
+func (cl *ChunkPipe[T]) PushBatch(data []T) *ChunkPipe[T] {
+	if len(data) == 0 {
+		return cl
+	}
+
+	// 使用單次鎖定
+	cl.pushMu.Lock()
+	defer cl.pushMu.Unlock()
+
+	// 預分配足夠大的塊
+	blockSize := (len(data) + 1023) &^ 1023 // 對齊到 1KB
+	block := &Chunk[T]{
+		data:   cl.pool.Alloc(uintptr(blockSize) * unsafe.Sizeof(data[0])),
+		size:   int32(len(data)),
+		offset: 0,
+	}
+
+	// 使用 SIMD 複製
+	simdCopy(block.data, unsafe.Pointer(&data[0]),
+		uintptr(len(data))*unsafe.Sizeof(data[0]))
+
+	// 更新鏈表
+	if cl.tail == nil {
+		cl.head = block
+		cl.tail = block
+	} else {
+		block.prev = cl.tail
+		cl.tail.next = block
+		cl.tail = block
+	}
+
+	cl.totalSize += len(data)
+	cl.validSize += len(data)
+	return cl
+}
+
+func (cl *ChunkPipe[T]) prefetchNext(current *Chunk[T]) {
+	if current != nil && current.next != nil {
+		nextData := current.next.data
+		if nextData != nil {
+			prefetcht0(uintptr(nextData))
+		}
+	}
 }
