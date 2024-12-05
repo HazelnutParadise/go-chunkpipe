@@ -161,7 +161,4 @@ BenchmarkGet/ChunkPipe-Get-1000-8           	40560032	        29.39 ns/op	      
 BenchmarkGet/Slice-Get-1000-8               	78709308	        15.34 ns/op	       0 B/op	       0 allocs/op
 BenchmarkGet/ChunkPipe-Get-10000-8          	49160175	        25.02 ns/op	       0 B/op	       0 allocs/op
 BenchmarkGet/Slice-Get-10000-8              	78374215	        15.29 ns/op	       0 B/op	       0 allocs/op
-PASS
-coverage: 42.7% of statements
-ok  	github.com/HazelnutParadise/go-chunkpipe	168.406s
 ```
