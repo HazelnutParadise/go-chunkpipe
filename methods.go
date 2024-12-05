@@ -101,47 +101,80 @@ func (cl *ChunkPipe[T]) insertBlockToTree(block *Chunk[T]) {
 	}
 }
 
+//go:nosplit
+//go:noinline
 func (cl *ChunkPipe[T]) Get(index int) (T, bool) {
 	var zero T
-	cl.mu.RLock()
-	defer cl.mu.RUnlock()
+	elemSize := unsafe.Sizeof(zero)
 
-	if index < 0 || index >= int(cl.validSize) {
+	// 快速路徑：檢查頭部（無需鎖）
+	head := (*Chunk[T])(atomic.LoadPointer(
+		(*unsafe.Pointer)(unsafe.Pointer(&cl.head))))
+	if head == nil {
 		return zero, false
 	}
 
-	// 使用 B+ 樹快定
-	if cl.bptree != nil {
-		// 使用索引位置作為鍵值
-		data, offset := cl.bptree.Find(uintptr(index))
-		if data != nil {
-			ptr := unsafe.Add(data, offset*unsafe.Sizeof(zero))
-			return *(*T)(ptr), true
-		}
-	}
+	// 內聯所有計算
+	offset := head.offset
+	size := head.size
+	validSize := size - offset
 
-	// 快速路徑：檢查頭部
-	if cl.head != nil && int(cl.head.size-cl.head.offset) > index {
-		ptr := unsafe.Add(cl.head.data,
-			uintptr(int(cl.head.offset)+index)*unsafe.Sizeof(zero))
+	// 快速路徑：頭部訪問
+	if index >= 0 && index < int(validSize) {
+		// 內聯指針計算
+		totalOffset := uintptr(offset+int32(index)) * elemSize
+		ptr := unsafe.Add(head.data, totalOffset)
 		return *(*T)(ptr), true
 	}
 
-	// 慢路徑：遍歷鏈表
-	current := cl.head
-	remainingIndex := index
-	for current != nil {
-		validCount := int(current.size - current.offset)
-		if remainingIndex < validCount {
-			ptr := unsafe.Add(current.data,
-				uintptr(int(current.offset)+remainingIndex)*unsafe.Sizeof(zero))
-			return *(*T)(ptr), true
-		}
-		remainingIndex -= validCount
-		current = current.next
+	// 檢查總大小
+	if index < 0 || index >= int(atomic.LoadInt32(&cl.validSize)) {
+		return zero, false
 	}
 
+	// 慢路徑：需要遍歷
+	cl.mu.RLock()
+	current := head
+	pos := int(validSize)
+
+	for current = current.next; current != nil; current = current.next {
+		offset = current.offset
+		size = current.size
+		blockSize := int(size - offset)
+		nextPos := pos + blockSize
+
+		if index < nextPos {
+			// 直接計算指針，避免乘法
+			base := uintptr(offset) * elemSize
+			idx := uintptr(index-pos) * elemSize
+			ptr := unsafe.Add(current.data, base+idx)
+			cl.mu.RUnlock()
+			return *(*T)(ptr), true
+		}
+		pos = nextPos
+	}
+
+	cl.mu.RUnlock()
 	return zero, false
+}
+
+// 建立索引
+func (cl *ChunkPipe[T]) buildIndex() {
+	if cl.bptree != nil {
+		return
+	}
+
+	cl.bptree = NewBPTree[T]()
+	current := cl.head
+	offset := uintptr(0)
+
+	for current != nil {
+		validCount := int(current.size - current.offset)
+		dataPtr := unsafe.Add(current.data, uintptr(current.offset)*unsafe.Sizeof(*new(T)))
+		cl.bptree.Insert(offset, dataPtr)
+		offset += uintptr(validCount)
+		current = current.next
+	}
 }
 
 // 從頭部彈出數據
@@ -180,7 +213,7 @@ func (cl *ChunkPipe[T]) PopChunkFront() ([]T, bool) {
 		copy(newData, src[offset:])
 	}
 
-	// 更新鏈表
+	// 更新表
 	next := head.next
 	cl.head = next
 	if next != nil {
@@ -250,7 +283,7 @@ func (cl *ChunkPipe[T]) PopChunkEnd() ([]T, bool) {
 
 func (cl *ChunkPipe[T]) PopFront() (T, bool) {
 	var zero T
-	// 使用原子操作檢查大小
+	// 原子操作檢查大小
 	if atomic.LoadInt32(&cl.validSize) == 0 {
 		return zero, false
 	}
@@ -288,7 +321,7 @@ func (cl *ChunkPipe[T]) PopFront() (T, bool) {
 			return zero, false
 		}
 
-		// 嘗試原子更新 offset
+		// 嘗試子更新 offset
 		if atomic.CompareAndSwapInt32(&head.offset, offset, offset+1) {
 			// 讀取值
 			ptr := unsafe.Add(head.data, uintptr(offset)*unsafe.Sizeof(zero))
@@ -325,7 +358,7 @@ func (cl *ChunkPipe[T]) removeHead() {
 	head.prev = nil
 }
 
-// 新增尾部移除方法
+// 新尾部移除方法
 func (cl *ChunkPipe[T]) removeTail() {
 	// 快取常用變數
 	tail := cl.tail
@@ -570,7 +603,7 @@ func (cl *ChunkPipe[T]) PushBatch(data []T) *ChunkPipe[T] {
 	defer cl.pushMu.Unlock()
 
 	// 預分配足夠大的塊
-	blockSize := (len(data) + 1023) &^ 1023 // 對齊到 1KB
+	blockSize := (len(data) + 1023) &^ 1023 // 齊到 1KB
 	block := &Chunk[T]{
 		data:   cl.pool.Alloc(uintptr(blockSize) * unsafe.Sizeof(data[0])),
 		size:   int32(len(data)),

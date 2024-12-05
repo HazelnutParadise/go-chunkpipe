@@ -2,11 +2,13 @@ package chunkpipe
 
 import (
 	"sync"
+	"sync/atomic"
 	"unsafe"
 )
 
 // 定義 Chunk 結構，用於存儲任意型別數據塊
 type Chunk[T any] struct {
+	_      [8]uint64      // 確保 64 字節對齊
 	data   unsafe.Pointer // 指向數據的指針
 	size   int32          // 數據大小
 	offset int32          // 當前讀取位置
@@ -37,6 +39,7 @@ type ChunkPipe[T any] struct {
 	mu        sync.RWMutex // 讀寫鎖
 	pushMu    sync.Mutex   // Push 操作鎖
 	popMu     sync.Mutex   // Pop 操作鎖
+	cache     atomic.Value // 存儲 *ChunkCache[T]
 }
 
 // 工廠函數：創建 ChunkPipe
@@ -77,4 +80,11 @@ type ChunkIterator[T any] struct {
 	minSize int32 // 最小塊大小
 	maxSize int32 // 最大塊大小
 	chunk   []T   // 當前塊
+}
+
+// 添加快取結構
+type ChunkCache[T any] struct {
+	chunk *Chunk[T]
+	start int32
+	end   int32
 }
