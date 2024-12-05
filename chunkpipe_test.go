@@ -275,3 +275,133 @@ func TestIterators(t *testing.T) {
 		}
 	})
 }
+
+// 基準測試：迭代器操作
+func BenchmarkIterators(b *testing.B) {
+	sizes := []int{100, 1000, 10000}
+	for _, size := range sizes {
+		data := make([]byte, size)
+		for i := range data {
+			data[i] = byte(i % 256)
+		}
+
+		b.Run(fmt.Sprintf("ValueIter-%d", size), func(b *testing.B) {
+			cp := NewChunkPipe[byte]()
+			cp.Push(data)
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				iter := cp.ValueIter()
+				for iter.Next() {
+					_ = iter.V()
+				}
+			}
+		})
+
+		b.Run(fmt.Sprintf("ChunkIter-%d", size), func(b *testing.B) {
+			cp := NewChunkPipe[byte]()
+			cp.Push(data)
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				iter := cp.ChunkIter()
+				for iter.Next() {
+					_ = iter.V()
+				}
+			}
+		})
+
+		b.Run(fmt.Sprintf("ValueSlice-%d", size), func(b *testing.B) {
+			cp := NewChunkPipe[byte]()
+			cp.Push(data)
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				_ = cp.ValueSlice()
+			}
+		})
+
+		b.Run(fmt.Sprintf("ChunkSlice-%d", size), func(b *testing.B) {
+			cp := NewChunkPipe[byte]()
+			cp.Push(data)
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				_ = cp.ChunkSlice()
+			}
+		})
+	}
+}
+
+// 測試所有公開方法
+func TestPublicMethods(t *testing.T) {
+	t.Run("Push", func(t *testing.T) {
+		cp := NewChunkPipe[int]()
+		data := []int{1, 2, 3}
+		cp.Push(data)
+		if cp.validSize != 3 {
+			t.Errorf("Push failed: expected size 3, got %d", cp.validSize)
+		}
+	})
+
+	t.Run("Get", func(t *testing.T) {
+		cp := NewChunkPipe[int]()
+		data := []int{1, 2, 3}
+		cp.Push(data)
+		if val, ok := cp.Get(1); !ok || val != 2 {
+			t.Errorf("Get failed: expected 2, got %v", val)
+		}
+	})
+
+	t.Run("PopFront", func(t *testing.T) {
+		cp := NewChunkPipe[int]()
+		data := []int{1, 2, 3}
+		cp.Push(data)
+		if val, ok := cp.PopFront(); !ok || val != 1 {
+			t.Errorf("PopFront failed: expected 1, got %v", val)
+		}
+	})
+
+	t.Run("PopEnd", func(t *testing.T) {
+		cp := NewChunkPipe[int]()
+		data := []int{1, 2, 3}
+		cp.Push(data)
+		if val, ok := cp.PopEnd(); !ok || val != 3 {
+			t.Errorf("PopEnd failed: expected 3, got %v", val)
+		}
+	})
+
+	t.Run("PopChunkFront", func(t *testing.T) {
+		cp := NewChunkPipe[int]()
+		data := []int{1, 2, 3}
+		cp.Push(data)
+		if chunk, ok := cp.PopChunkFront(); !ok || len(chunk) != 3 || chunk[0] != 1 {
+			t.Errorf("PopChunkFront failed: expected [1,2,3], got %v", chunk)
+		}
+	})
+
+	t.Run("PopChunkEnd", func(t *testing.T) {
+		cp := NewChunkPipe[int]()
+		data := []int{1, 2, 3}
+		cp.Push(data)
+		if chunk, ok := cp.PopChunkEnd(); !ok || len(chunk) != 3 || chunk[2] != 3 {
+			t.Errorf("PopChunkEnd failed: expected [1,2,3], got %v", chunk)
+		}
+	})
+
+	t.Run("ValueSlice", func(t *testing.T) {
+		cp := NewChunkPipe[int]()
+		data := []int{1, 2, 3}
+		cp.Push(data)
+		slice := cp.ValueSlice()
+		if len(slice) != 3 || slice[1] != 2 {
+			t.Errorf("ValueSlice failed: expected [1,2,3], got %v", slice)
+		}
+	})
+
+	t.Run("ChunkSlice", func(t *testing.T) {
+		cp := NewChunkPipe[int]()
+		data := []int{1, 2, 3}
+		cp.Push(data)
+		chunks := cp.ChunkSlice()
+		if len(chunks) != 1 || len(chunks[0]) != 3 || chunks[0][1] != 2 {
+			t.Errorf("ChunkSlice failed: expected [[1,2,3]], got %v", chunks)
+		}
+	})
+}
