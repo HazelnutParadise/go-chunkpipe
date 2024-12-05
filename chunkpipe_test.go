@@ -326,6 +326,30 @@ func BenchmarkIterators(b *testing.B) {
 				_ = cp.ChunkSlice()
 			}
 		})
+
+		// 添加原生切片的 for range 測試
+		b.Run(fmt.Sprintf("NativeSlice-%d", size), func(b *testing.B) {
+			slice := make([]byte, size)
+			copy(slice, data)
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				for range slice {
+					// 空迭代，與其他測試保持一致
+				}
+			}
+		})
+
+		// 添加原生切片的帶值 for range 測試
+		b.Run(fmt.Sprintf("NativeSliceValue-%d", size), func(b *testing.B) {
+			slice := make([]byte, size)
+			copy(slice, data)
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				for _, v := range slice {
+					_ = v // 讀取值，與 ValueIter 保持一致
+				}
+			}
+		})
 	}
 }
 
