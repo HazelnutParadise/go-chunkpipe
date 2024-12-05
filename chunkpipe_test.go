@@ -1,8 +1,11 @@
 package chunkpipe
 
 import (
+	"bytes"
 	"fmt"
+	"sync"
 	"testing"
+	"unsafe"
 )
 
 // 基準測試：插入操作
@@ -145,21 +148,51 @@ func TestConcurrency(t *testing.T) {
 
 // 測試極限情況
 func TestEdgeCases(t *testing.T) {
-	cp := NewChunkPipe[byte]()
-
-	// 測試空數據
 	t.Run("Empty", func(t *testing.T) {
+		cp := NewChunkPipe[byte]()
 		if _, ok := cp.PopFront(); ok {
 			t.Error("Should return false for empty pipe")
 		}
 	})
 
-	// 測試大量數據
 	t.Run("Large", func(t *testing.T) {
+		cp := NewChunkPipe[byte]()
 		data := make([]byte, 1000000)
 		cp.Push(data)
 		if cp.validSize != 1000000 {
 			t.Errorf("Expected size 1000000, got %d", cp.validSize)
+		}
+	})
+
+	t.Run("NilData", func(t *testing.T) {
+		cp := NewChunkPipe[int]()
+		if _, ok := cp.PopFront(); ok {
+			t.Error("PopFront should return false for nil data")
+		}
+		if _, ok := cp.PopEnd(); ok {
+			t.Error("PopEnd should return false for nil data")
+		}
+	})
+
+	t.Run("SingleElement", func(t *testing.T) {
+		cp := NewChunkPipe[int]()
+		cp.Push([]int{1})
+		if val, ok := cp.PopFront(); !ok || val != 1 {
+			t.Errorf("PopFront failed: got %v, %v", val, ok)
+		}
+		if _, ok := cp.PopFront(); ok {
+			t.Error("PopFront should return false after last element")
+		}
+	})
+
+	t.Run("InvalidIndex", func(t *testing.T) {
+		cp := NewChunkPipe[int]()
+		cp.Push([]int{1, 2, 3})
+		if _, ok := cp.Get(-1); ok {
+			t.Error("Get should return false for negative index")
+		}
+		if _, ok := cp.Get(3); ok {
+			t.Error("Get should return false for out of range index")
 		}
 	})
 }
@@ -426,6 +459,130 @@ func TestPublicMethods(t *testing.T) {
 		chunks := cp.ChunkSlice()
 		if len(chunks) != 1 || len(chunks[0]) != 3 || chunks[0][1] != 2 {
 			t.Errorf("ChunkSlice failed: expected [[1,2,3]], got %v", chunks)
+		}
+	})
+}
+
+func TestMemoryPool(t *testing.T) {
+	t.Run("Alloc", func(t *testing.T) {
+		pool := NewMemoryPool()
+		ptr := pool.Alloc(1024)
+		if ptr == nil {
+			t.Error("Alloc failed")
+		}
+	})
+
+	t.Run("Free", func(t *testing.T) {
+		pool := NewMemoryPool()
+		pool.Alloc(1024)
+		beforeSize := pool.Size()
+		pool.Free()
+		afterSize := pool.Size()
+		if afterSize != 0 || beforeSize == 0 {
+			t.Errorf("Free failed: before=%d, after=%d", beforeSize, afterSize)
+		}
+	})
+}
+
+func TestBlockCache(t *testing.T) {
+	t.Run("PutGet", func(t *testing.T) {
+		block := &Chunk[byte]{
+			data:   unsafe.Pointer(&[1]byte{1}),
+			size:   1,
+			offset: 0,
+		}
+
+		globalBlockCache.put(block)
+		got := globalBlockCache.get()
+		if got == nil {
+			t.Error("get returned nil")
+		}
+	})
+
+	t.Run("EmptyGet", func(t *testing.T) {
+		got := globalBlockCache.get()
+		if got != nil {
+			t.Error("get should return nil for empty cache")
+		}
+	})
+}
+
+func TestSIMD(t *testing.T) {
+	t.Run("SmallCopy", func(t *testing.T) {
+		src := []byte{1, 2, 3, 4}
+		dst := make([]byte, 4)
+		simdCopy(unsafe.Pointer(&dst[0]), unsafe.Pointer(&src[0]), 4)
+		if !bytes.Equal(src, dst) {
+			t.Errorf("copy failed: got %v, want %v", dst, src)
+		}
+	})
+
+	t.Run("LargeCopy", func(t *testing.T) {
+		src := make([]byte, 1024)
+		for i := range src {
+			src[i] = byte(i)
+		}
+		dst := make([]byte, 1024)
+		simdCopy(unsafe.Pointer(&dst[0]), unsafe.Pointer(&src[0]), 1024)
+		if !bytes.Equal(src, dst) {
+			t.Error("large copy failed")
+		}
+	})
+}
+
+func TestConcurrentAccess(t *testing.T) {
+	cp := NewChunkPipe[int]()
+	const goroutines = 10
+	const iterations = 1000
+
+	var wg sync.WaitGroup
+	wg.Add(goroutines * 2) // readers + writers
+
+	// Writers
+	for i := 0; i < goroutines; i++ {
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < iterations; j++ {
+				cp.Push([]int{id*iterations + j})
+			}
+		}(i)
+	}
+
+	// Readers
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			for j := 0; j < iterations; j++ {
+				cp.ValueIter()
+				cp.ChunkIter()
+				cp.ValueSlice()
+				cp.ChunkSlice()
+			}
+		}()
+	}
+
+	wg.Wait()
+}
+
+func BenchmarkMemoryOperations(b *testing.B) {
+	sizes := []int{64, 1024, 4096}
+	for _, size := range sizes {
+		b.Run(fmt.Sprintf("Alloc-%d", size), func(b *testing.B) {
+			pool := NewMemoryPool()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				pool.Alloc(uintptr(size))
+			}
+		})
+	}
+}
+
+func BenchmarkConcurrentOperations(b *testing.B) {
+	cp := NewChunkPipe[int]()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			cp.Push([]int{1, 2, 3})
+			cp.PopFront()
 		}
 	})
 }
