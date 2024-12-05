@@ -119,11 +119,11 @@ func (cl *ChunkPipe[T]) Get(index int) (T, bool) {
 	size := head.size
 	validSize := size - offset
 
-	// 快速路���：頭部訪問
+	// 快速路徑：頭部訪問
 	if uint(index) < uint(validSize) {
 		// 內聯指針計算
-		totalOffset := uintptr(offset)*elemSize + uintptr(index)*elemSize
-		ptr := unsafe.Add(head.data, totalOffset)
+		ptr := unsafe.Add(head.data,
+			uintptr(offset)*elemSize+uintptr(index)*elemSize)
 		return *(*T)(ptr), true
 	}
 
@@ -145,8 +145,8 @@ func (cl *ChunkPipe[T]) Get(index int) (T, bool) {
 
 		if uint(index) < uint(nextPos) {
 			// 內聯指針計算
-			totalOffset := uintptr(offset)*elemSize + uintptr(index-pos)*elemSize
-			ptr := unsafe.Add(current.data, totalOffset)
+			ptr := unsafe.Add(current.data,
+				uintptr(offset)*elemSize+uintptr(index-pos)*elemSize)
 			cl.mu.RUnlock()
 			return *(*T)(ptr), true
 		}
@@ -454,7 +454,7 @@ func (cl *ChunkPipe[T]) ValueSlice() []T {
 					*(*[8]uint64)(unsafe.Add(srcPtr, i))
 			}
 
-			// 處理剩餘字節
+			// 處��剩餘字節
 			for i := aligned64; i < copySize; i += 8 {
 				*(*uint64)(unsafe.Add(dstPtr, pos+i)) =
 					*(*uint64)(unsafe.Add(srcPtr, i))
