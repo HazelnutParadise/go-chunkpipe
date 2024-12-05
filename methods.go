@@ -250,47 +250,55 @@ func (cl *ChunkPipe[T]) PopChunkEnd() ([]T, bool) {
 
 func (cl *ChunkPipe[T]) PopFront() (T, bool) {
 	var zero T
-	cl.mu.RLock()
-	head := cl.head
-	if head == nil || cl.validSize == 0 {
-		cl.mu.RUnlock()
+	// 使用原子操作檢查大小
+	if atomic.LoadInt32(&cl.validSize) == 0 {
 		return zero, false
 	}
-	cl.mu.RUnlock()
 
-	// 快速路徑：使用原子操作
-	offset := atomic.LoadInt32(&head.offset)
-	if offset >= head.size {
-		// 慢路徑：需要更新鏈表
-		cl.mu.Lock()
-		defer cl.mu.Unlock()
-
-		next := head.next
-		if next != nil {
-			next.prev = nil
-			cl.head = next
-			// 預取下一個塊
-			_ = *(*byte)(next.data)
-		} else {
-			cl.head = nil
-			cl.tail = nil
+	// 使用 CAS 獲取頭節點
+	for {
+		head := (*Chunk[T])(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&cl.head))))
+		if head == nil {
+			return zero, false
 		}
 
-		// 回收塊
-		globalBlockCache.put((*Chunk[byte])(unsafe.Pointer(head)))
-		return zero, false
+		// 快速路徑：使用原子操作
+		offset := atomic.LoadInt32(&head.offset)
+		if offset >= head.size {
+			// 慢路徑：需要更新鏈表
+			cl.mu.Lock()
+			if head != cl.head {
+				cl.mu.Unlock()
+				continue
+			}
+			next := head.next
+			if next != nil {
+				next.prev = nil
+				atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&cl.head)), unsafe.Pointer(next))
+				// 預取
+				_ = *(*byte)(next.data)
+			} else {
+				atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&cl.head)), nil)
+				cl.tail = nil
+			}
+			cl.mu.Unlock()
+
+			// 回收塊
+			globalBlockCache.put((*Chunk[byte])(unsafe.Pointer(head)))
+			return zero, false
+		}
+
+		// 嘗試原子更新 offset
+		if atomic.CompareAndSwapInt32(&head.offset, offset, offset+1) {
+			// 讀取值
+			ptr := unsafe.Add(head.data, uintptr(offset)*unsafe.Sizeof(zero))
+			value := *(*T)(ptr)
+
+			atomic.AddInt32(&cl.validSize, -1)
+			atomic.AddInt32(&cl.totalSize, -1)
+			return value, true
+		}
 	}
-
-	// 直接讀取值
-	ptr := unsafe.Add(head.data, uintptr(offset)*unsafe.Sizeof(zero))
-	value := *(*T)(ptr)
-
-	// 原子更新 offset
-	atomic.AddInt32(&head.offset, 1)
-	atomic.AddInt32(&cl.validSize, -1)
-	atomic.AddInt32(&cl.totalSize, -1)
-
-	return value, true
 }
 
 // 抽取共用邏輯
