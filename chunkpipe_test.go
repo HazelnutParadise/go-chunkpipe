@@ -8,70 +8,6 @@ import (
 	"unsafe"
 )
 
-// 基準測試：插入操作
-func BenchmarkPush(b *testing.B) {
-	sizes := []int{10, 100, 1000, 10000, 100000, 1000000}
-	for _, size := range sizes {
-		data := make([]byte, size)
-		for i := range data {
-			data[i] = byte(i % 256)
-		}
-
-		b.Run(fmt.Sprintf("ChunkPipe-%d", size), func(b *testing.B) {
-			cp := NewChunkPipe[byte]()
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				cp.Push(data)
-			}
-		})
-
-		b.Run(fmt.Sprintf("Slice-%d", size), func(b *testing.B) {
-			var slice []byte
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				slice = append(slice, data...)
-			}
-		})
-	}
-}
-
-// 基準測試：彈出操作
-func BenchmarkPop(b *testing.B) {
-	sizes := []int{10, 100, 1000, 10000}
-	for _, size := range sizes {
-		data := make([]byte, size)
-		for i := range data {
-			data[i] = byte(i % 256)
-		}
-
-		b.Run("ChunkPipe-PopFront-"+string(rune(size)), func(b *testing.B) {
-			cp := NewChunkPipe[byte]()
-			cp.Push(data)
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				if i%size == 0 {
-					cp.Push(data)
-				}
-				cp.PopFront()
-			}
-		})
-
-		b.Run("Slice-PopFront-"+string(rune(size)), func(b *testing.B) {
-			slice := make([]byte, size)
-			copy(slice, data)
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				if i%size == 0 {
-					slice = append(slice, data...)
-				}
-				if len(slice) > 0 {
-					slice = slice[1:]
-				}
-			}
-		})
-	}
-}
-
 // 測試不同類型的數據結構
 type TestStruct struct {
 	ID   int
@@ -117,7 +53,6 @@ func TestDifferentTypes(t *testing.T) {
 	})
 }
 
-// 測試並發安全性
 func TestConcurrency(t *testing.T) {
 	cp := NewChunkPipe[int]()
 	done := make(chan bool)
@@ -146,7 +81,6 @@ func TestConcurrency(t *testing.T) {
 	<-done
 }
 
-// 測試極限情況
 func TestEdgeCases(t *testing.T) {
 	t.Run("Empty", func(t *testing.T) {
 		cp := NewChunkPipe[byte]()
@@ -197,43 +131,6 @@ func TestEdgeCases(t *testing.T) {
 	})
 }
 
-// 測試內存使用
-func BenchmarkMemoryUsage(b *testing.B) {
-	sizes := []int{1024, 1024 * 1024}
-	for _, size := range sizes {
-		data := make([]byte, size)
-
-		b.Run(fmt.Sprintf("ChunkPipe-%d", size), func(b *testing.B) {
-			b.ReportAllocs()
-			cp := NewChunkPipe[byte]()
-			for i := 0; i < b.N; i++ {
-				cp.Push(data)
-				iter := cp.ChunkIter()
-				for iter.Next() {
-					_ = iter.V()
-				}
-			}
-		})
-	}
-}
-
-// 測試混合操作
-func BenchmarkMixedOperations(b *testing.B) {
-	b.Run("ChunkPipe", func(b *testing.B) {
-		cp := NewChunkPipe[int]()
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			cp.Push([]int{i})
-			if i%2 == 0 {
-				cp.PopFront()
-			} else {
-				cp.PopEnd()
-			}
-		}
-	})
-}
-
-// 增加新的測試案例
 func TestLargeDataHandling(t *testing.T) {
 	sizes := []int{1 << 10, 1 << 15, 1 << 20} // 1KB, 32KB, 1MB
 
@@ -309,84 +206,6 @@ func TestIterators(t *testing.T) {
 	})
 }
 
-// 基準測試：迭代器操作
-func BenchmarkIterators(b *testing.B) {
-	sizes := []int{100, 1000, 10000}
-	for _, size := range sizes {
-		data := make([]byte, size)
-		for i := range data {
-			data[i] = byte(i % 256)
-		}
-
-		b.Run(fmt.Sprintf("ValueIter-%d", size), func(b *testing.B) {
-			cp := NewChunkPipe[byte]()
-			cp.Push(data)
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				iter := cp.ValueIter()
-				for iter.Next() {
-					_ = iter.V()
-				}
-			}
-		})
-
-		b.Run(fmt.Sprintf("ChunkIter-%d", size), func(b *testing.B) {
-			cp := NewChunkPipe[byte]()
-			cp.Push(data)
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				iter := cp.ChunkIter()
-				for iter.Next() {
-					_ = iter.V()
-				}
-			}
-		})
-
-		b.Run(fmt.Sprintf("ValueSlice-%d", size), func(b *testing.B) {
-			cp := NewChunkPipe[byte]()
-			cp.Push(data)
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				_ = cp.ValueSlice()
-			}
-		})
-
-		b.Run(fmt.Sprintf("ChunkSlice-%d", size), func(b *testing.B) {
-			cp := NewChunkPipe[byte]()
-			cp.Push(data)
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				_ = cp.ChunkSlice()
-			}
-		})
-
-		// 添加原生切片的 for range 測試
-		b.Run(fmt.Sprintf("NativeSlice-%d", size), func(b *testing.B) {
-			slice := make([]byte, size)
-			copy(slice, data)
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				for range slice {
-					// 空迭代，與其他測試保持一致
-				}
-			}
-		})
-
-		// 添加原生切片的帶值 for range 測試
-		b.Run(fmt.Sprintf("NativeSliceValue-%d", size), func(b *testing.B) {
-			slice := make([]byte, size)
-			copy(slice, data)
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				for _, v := range slice {
-					_ = v // 讀取值，與 ValueIter 保持一致
-				}
-			}
-		})
-	}
-}
-
-// 測試所有公開方法
 func TestPublicMethods(t *testing.T) {
 	t.Run("Push", func(t *testing.T) {
 		cp := NewChunkPipe[int]()
@@ -564,32 +383,10 @@ func TestConcurrentAccess(t *testing.T) {
 	wg.Wait()
 }
 
-func BenchmarkMemoryOperations(b *testing.B) {
-	sizes := []int{64, 1024, 4096}
-	for _, size := range sizes {
-		b.Run(fmt.Sprintf("Alloc-%d", size), func(b *testing.B) {
-			pool := NewMemoryPool()
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				pool.Alloc(uintptr(size))
-			}
-		})
-	}
-}
-
-func BenchmarkConcurrentOperations(b *testing.B) {
-	cp := NewChunkPipe[int]()
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			cp.Push([]int{1, 2, 3})
-			cp.PopFront()
-		}
-	})
-}
-
 func TestTreeOperations(t *testing.T) {
 	t.Run("InsertBlockToTree", func(t *testing.T) {
 		cp := NewChunkPipe[int]()
+
 		block := &Chunk[int]{
 			data:   unsafe.Pointer(&[1]int{1}),
 			size:   1,
