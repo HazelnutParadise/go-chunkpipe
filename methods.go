@@ -453,35 +453,25 @@ func (cl *ChunkPipe[T]) ValueSlice() []T {
 	cl.mu.RLock()
 	defer cl.mu.RUnlock()
 
+	// Check if the pipe is empty
 	if cl.validSize == 0 {
-		return nil
+		return []T{}
 	}
 
-	result := make([]T, cl.validSize)
-	var zero T
-	elemSize := unsafe.Sizeof(zero)
-	dstPtr := unsafe.Pointer(&result[0])
-	pos := uintptr(0)
+	// Calculate total size needed
+	totalSize := 0
+	for current := cl.head; current != nil; current = current.next {
+		totalSize += int(current.size - current.offset)
+	}
 
+	// Create result slice with exact capacity
+	result := make([]T, 0, totalSize)
+
+	// Safely append all values
 	for current := cl.head; current != nil; current = current.next {
 		if n := current.size - current.offset; n > 0 {
-			copySize := uintptr(n) * elemSize
-			srcPtr := unsafe.Add(current.data,
-				uintptr(current.offset)*elemSize)
-
-			// 使用 64 字節批次複製
-			aligned64 := copySize &^ 63
-			for i := uintptr(0); i < aligned64; i += 64 {
-				*(*[8]uint64)(unsafe.Add(dstPtr, pos+i)) =
-					*(*[8]uint64)(unsafe.Add(srcPtr, i))
-			}
-
-			// 處剩餘字節
-			for i := aligned64; i < copySize; i += 8 {
-				*(*uint64)(unsafe.Add(dstPtr, pos+i)) =
-					*(*uint64)(unsafe.Add(srcPtr, i))
-			}
-			pos += copySize
+			src := unsafe.Slice((*T)(current.data), int(current.size))
+			result = append(result, src[current.offset:current.size]...)
 		}
 	}
 
