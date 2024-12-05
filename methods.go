@@ -119,16 +119,16 @@ func (cl *ChunkPipe[T]) Get(index int) (T, bool) {
 	size := head.size
 	validSize := size - offset
 
-	// 快速路徑：頭部訪問
-	if index >= 0 && index < int(validSize) {
+	// 快速路���：頭部訪問
+	if uint(index) < uint(validSize) {
 		// 內聯指針計算
-		totalOffset := uintptr(offset+int32(index)) * elemSize
+		totalOffset := uintptr(offset)*elemSize + uintptr(index)*elemSize
 		ptr := unsafe.Add(head.data, totalOffset)
 		return *(*T)(ptr), true
 	}
 
 	// 檢查總大小
-	if index < 0 || index >= int(atomic.LoadInt32(&cl.validSize)) {
+	if uint(index) >= uint(atomic.LoadInt32(&cl.validSize)) {
 		return zero, false
 	}
 
@@ -143,11 +143,10 @@ func (cl *ChunkPipe[T]) Get(index int) (T, bool) {
 		blockSize := int(size - offset)
 		nextPos := pos + blockSize
 
-		if index < nextPos {
-			// 直接計算指針，避免乘法
-			base := uintptr(offset) * elemSize
-			idx := uintptr(index-pos) * elemSize
-			ptr := unsafe.Add(current.data, base+idx)
+		if uint(index) < uint(nextPos) {
+			// 內聯指針計算
+			totalOffset := uintptr(offset)*elemSize + uintptr(index-pos)*elemSize
+			ptr := unsafe.Add(current.data, totalOffset)
 			cl.mu.RUnlock()
 			return *(*T)(ptr), true
 		}
