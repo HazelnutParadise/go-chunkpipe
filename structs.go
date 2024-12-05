@@ -30,13 +30,13 @@ type ChunkPipe[T any] struct {
 	bptree    *BPTree[T]   // B+ Tree 索引
 	skiplist  *SkipList[T] // Skip List 索引
 	pool      *MemoryPool  // 記憶體池
-	head      *Chunk[T]
-	tail      *Chunk[T]
-	totalSize int
-	validSize int
-	mu        sync.RWMutex
-	cache     sync.Pool  // 對象池
-	bufPool   *sync.Pool // 緩衝區池
+	head      *Chunk[T]    // 頭節點
+	tail      *Chunk[T]    // 尾節點
+	totalSize int          // 總大小
+	validSize int          // 有效大小
+	mu        sync.RWMutex // 讀寫鎖
+	pushMu    sync.Mutex   // Push 操作鎖
+	popMu     sync.Mutex   // Pop 操作鎖
 }
 
 // 工廠函數：創建 ChunkPipe

@@ -57,3 +57,36 @@ func (p *MemoryPool) normalAlloc(size uintptr) unsafe.Pointer {
 	p.mu.Unlock()
 	return unsafe.Pointer(&block[0])
 }
+
+// 增加塊緩存
+type blockCache struct {
+	blocks []*Chunk[byte]
+	mu     sync.Mutex
+}
+
+var globalBlockCache = &blockCache{
+	blocks: make([]*Chunk[byte], 0, 1024),
+}
+
+func (c *blockCache) get() *Chunk[byte] {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if len(c.blocks) > 0 {
+		block := c.blocks[len(c.blocks)-1]
+		c.blocks = c.blocks[:len(c.blocks)-1]
+		return block
+	}
+	return nil
+}
+
+func (c *blockCache) put(block *Chunk[byte]) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if len(c.blocks) < 1024 {
+		block.next = nil
+		block.prev = nil
+		c.blocks = append(c.blocks, block)
+	}
+}

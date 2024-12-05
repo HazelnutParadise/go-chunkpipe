@@ -130,7 +130,9 @@ func TestConcurrency(t *testing.T) {
 	// 並發讀取
 	go func() {
 		count := 0
-		for range cp.Range() {
+		iter := cp.ValueIter()
+		for iter.Next() {
+			_ = iter.V()
 			count++
 		}
 		done <- true
@@ -162,45 +164,6 @@ func TestEdgeCases(t *testing.T) {
 	})
 }
 
-// 基準測試：遍歷操作
-func BenchmarkRange(b *testing.B) {
-	size := 1000
-	data := make([]byte, size)
-	for i := range data {
-		data[i] = byte(i % 256)
-	}
-
-	b.Run("ChunkPipe-Range", func(b *testing.B) {
-		cp := NewChunkPipe[byte]()
-		cp.Push(data)
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			for range cp.Range() {
-			}
-		}
-	})
-
-	b.Run("ChunkPipe-RangeChunk", func(b *testing.B) {
-		cp := NewChunkPipe[byte]()
-		cp.Push(data)
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			for range cp.RangeChunk() {
-			}
-		}
-	})
-
-	b.Run("Slice-Range", func(b *testing.B) {
-		slice := make([]byte, size)
-		copy(slice, data)
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			for range slice {
-			}
-		}
-	})
-}
-
 // 測試內存使用
 func BenchmarkMemoryUsage(b *testing.B) {
 	sizes := []int{1024, 1024 * 1024}
@@ -212,7 +175,9 @@ func BenchmarkMemoryUsage(b *testing.B) {
 			cp := NewChunkPipe[byte]()
 			for i := 0; i < b.N; i++ {
 				cp.Push(data)
-				for range cp.RangeChunk() {
+				iter := cp.ChunkIter()
+				for iter.Next() {
+					_ = iter.V()
 				}
 			}
 		})
@@ -233,29 +198,6 @@ func BenchmarkMixedOperations(b *testing.B) {
 			}
 		}
 	})
-}
-
-// 基準測試：優化遍歷操作
-func BenchmarkRangeOptimized(b *testing.B) {
-	size := 1000
-	data := make([]byte, size)
-	for i := range data {
-		data[i] = byte(i % 256)
-	}
-
-	b.Run("Range-ForRange", func(b *testing.B) {
-		cp := NewChunkPipe[byte]()
-		cp.Push(data)
-		b.ResetTimer()
-
-		for i := 0; i < b.N; i++ {
-			sum := byte(0)
-			for _, v := range cp.Range() {
-				sum += v
-			}
-		}
-	})
-
 }
 
 // 增加新的測試案例
@@ -281,17 +223,18 @@ func TestLargeDataHandling(t *testing.T) {
 			}
 
 			// 測試讀取
-			result := cp.Range()
-			if len(result) != size {
-				t.Errorf("Expected length %d, got %d", size, len(result))
-			}
-
-			// 驗證資料正確性
-			for i := 0; i < size; i++ {
-				if result[i] != data[i] {
-					t.Errorf("Data mismatch at index %d", i)
+			iter := cp.ValueIter()
+			count := 0
+			for iter.Next() {
+				value := iter.V()
+				if value != data[count] {
+					t.Errorf("Data mismatch at index %d", count)
 					break
 				}
+				count++
+			}
+			if count != size {
+				t.Errorf("Expected length %d, got %d", size, count)
 			}
 		})
 	}
