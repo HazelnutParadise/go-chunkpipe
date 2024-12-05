@@ -44,10 +44,31 @@ func (cl *ChunkPipe[T]) Push(data []T) *ChunkPipe[T] {
 		atomic.AddInt32(&cl.validSize, int32(dataLen))
 		return cl
 	}
-	// ... 原有的數據處理邏輯
 
 	// 大數據處理邏輯
-	// ... 原有的大數據處理代碼 ...
+	cl.pushMu.Lock()
+	defer cl.pushMu.Unlock()
+
+	// 分配新的數據塊
+	block := &Chunk[T]{
+		data:   unsafe.Pointer(&data[0]), // 直接使用輸入數據的指針
+		size:   int32(dataLen),
+		offset: 0,
+	}
+
+	// 更新鏈表
+	if cl.tail == nil {
+		cl.head = block
+		cl.tail = block
+	} else {
+		block.prev = cl.tail
+		cl.tail.next = block
+		cl.tail = block
+	}
+
+	// 更新計數器
+	atomic.AddInt32(&cl.totalSize, int32(dataLen))
+	atomic.AddInt32(&cl.validSize, int32(dataLen))
 
 	return cl
 }
@@ -333,54 +354,55 @@ func (cl *ChunkPipe[T]) PopFront() (T, bool) {
 	}
 }
 
-// 抽取共用邏輯
-func (cl *ChunkPipe[T]) removeHead() {
-	// 快取常用變數
-	head := cl.head
-	if head == nil {
-		return
-	}
+// // 抽取共用邏輯
+// func (cl *ChunkPipe[T]) removeHead() {
+// 	// 快取常用變數
+// 	head := cl.head
+// 	if head == nil {
+// 		return
+// 	}
 
-	// 快取 next 指針
-	next := head.next
-	cl.head = next
+// 	// 快取 next 指針
+// 	next := head.next
+// 	cl.head = next
 
-	// 更新指針關係
-	if next != nil {
-		next.prev = nil
-	} else {
-		cl.tail = nil
-	}
+// 	// 更新指針關係
+// 	if next != nil {
+// 		next.prev = nil
+// 	} else {
+// 		cl.tail = nil
+// 	}
 
-	// 清理原節點的指針
-	head.next = nil
-	head.prev = nil
-}
+// 	// 清理原節點的指針
+// 	head.next = nil
+// 	head.prev = nil
+// }
 
-// 新尾部移除方法
-func (cl *ChunkPipe[T]) removeTail() {
-	// 快取常用變數
-	tail := cl.tail
-	if tail == nil {
-		return
-	}
+// // 新尾部移除方法
+// func (cl *ChunkPipe[T]) removeTail() {
+// 	// 快取常用變數
+// 	tail := cl.tail
+// 	if tail == nil {
+// 		return
+// 	}
 
-	// 快取 prev 指針
-	prev := tail.prev
-	cl.tail = prev
+// 	// 快取 prev 指針
+// 	prev := tail.prev
+// 	cl.tail = prev
 
-	// 更新指針關係
-	if prev != nil {
-		prev.next = nil
-	} else {
-		cl.head = nil
-	}
+// 	// 更新指針關係
+// 	if prev != nil {
+// 		prev.next = nil
+// 	} else {
+// 		cl.head = nil
+// 	}
 
-	// 清理原節點的指針
-	tail.next = nil
-	tail.prev = nil
-}
+// 	// 清理原節點的指針
+// 	tail.next = nil
+// 	tail.prev = nil
+// }
 
+// 從尾部彈出數據
 func (cl *ChunkPipe[T]) PopEnd() (T, bool) {
 	var zero T
 	cl.mu.RLock()
@@ -454,7 +476,7 @@ func (cl *ChunkPipe[T]) ValueSlice() []T {
 					*(*[8]uint64)(unsafe.Add(srcPtr, i))
 			}
 
-			// 處��剩餘字節
+			// 處剩餘字節
 			for i := aligned64; i < copySize; i += 8 {
 				*(*uint64)(unsafe.Add(dstPtr, pos+i)) =
 					*(*uint64)(unsafe.Add(srcPtr, i))
@@ -515,6 +537,13 @@ func (it *ValueIterator[T]) Next() bool {
 		return false
 	}
 
+	// 檢查當前塊是否有效
+	if int(it.pos) >= int(it.current.size-it.current.offset) {
+		it.current = it.current.next
+		it.pos = 0
+		return it.current != nil
+	}
+
 	// 預取下一個塊
 	if it.current.next != nil &&
 		int(it.pos) >= int(it.current.size-it.current.offset)-4 {
@@ -525,11 +554,7 @@ func (it *ValueIterator[T]) Next() bool {
 	}
 
 	it.pos++
-	if int(it.pos) >= int(it.current.size-it.current.offset) {
-		it.current = it.current.next
-		it.pos = 0
-	}
-	return it.current != nil
+	return true
 }
 
 //go:noinline
@@ -543,8 +568,14 @@ func (it *ValueIterator[T]) V() T {
 	if it.current == nil {
 		return zero
 	}
+
+	// 確保 pos 在有效範圍內
+	if int(it.pos-1) >= int(it.current.size-it.current.offset) {
+		return zero
+	}
+
 	ptr := unsafe.Add(it.current.data,
-		uintptr(it.current.offset+it.pos)*unsafe.Sizeof(zero))
+		uintptr(it.current.offset+it.pos-1)*unsafe.Sizeof(zero))
 	return *(*T)(ptr)
 }
 
