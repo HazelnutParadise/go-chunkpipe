@@ -12,8 +12,8 @@ type MemoryPool struct {
 	size   int
 }
 
-// NewMemoryPool 創建一個新的記憶體池
-func NewMemoryPool() *MemoryPool {
+// newMemoryPool 創建一個新的記憶體池
+func newMemoryPool() *MemoryPool {
 	return &MemoryPool{
 		blocks: make([][]byte, 0),
 		size:   0,
@@ -47,15 +47,6 @@ func (p *MemoryPool) Size() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.size
-}
-
-func (p *MemoryPool) normalAlloc(size uintptr) unsafe.Pointer {
-	block := make([]byte, size)
-	p.mu.Lock()
-	p.blocks = append(p.blocks, block)
-	p.size += len(block)
-	p.mu.Unlock()
-	return unsafe.Pointer(&block[0])
 }
 
 // 增加塊緩存

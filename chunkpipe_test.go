@@ -284,7 +284,7 @@ func TestPublicMethods(t *testing.T) {
 
 func TestMemoryPool(t *testing.T) {
 	t.Run("Alloc", func(t *testing.T) {
-		pool := NewMemoryPool()
+		pool := newMemoryPool()
 		ptr := pool.Alloc(1024)
 		if ptr == nil {
 			t.Error("Alloc failed")
@@ -292,19 +292,27 @@ func TestMemoryPool(t *testing.T) {
 	})
 
 	t.Run("Free", func(t *testing.T) {
-		pool := NewMemoryPool()
-		pool.Alloc(1024)
+		pool := newMemoryPool()
+
+		// 先分配一些記憶體
+		pool.Alloc(1024) // 分配 1KB
+
 		beforeSize := pool.Size()
 		pool.Free()
 		afterSize := pool.Size()
-		if afterSize != 0 || beforeSize == 0 {
-			t.Errorf("Free failed: before=%d, after=%d", beforeSize, afterSize)
+
+		if beforeSize == 0 {
+			t.Error("初始大小不應為 0")
+		}
+		if afterSize != 0 {
+			t.Errorf("Free 後大小應為 0，但得到 %d", afterSize)
 		}
 	})
 }
 
 func TestBlockCache(t *testing.T) {
 	t.Run("PutGet", func(t *testing.T) {
+
 		block := &Chunk[byte]{
 			data:   unsafe.Pointer(&[1]byte{1}),
 			size:   1,

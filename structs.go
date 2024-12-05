@@ -2,19 +2,17 @@ package chunkpipe
 
 import (
 	"sync"
-	"sync/atomic"
 	"unsafe"
 )
 
 // 定義 Chunk 結構，用於存儲任意型別數據塊
 type Chunk[T any] struct {
-	_      [8]uint64      // 確保 64 字節對齊
-	data   unsafe.Pointer // 指向數據的指針
-	size   int32          // 數據大小
-	offset int32          // 當前讀取位置
-	next   *Chunk[T]      // 下一個塊的指標
-	prev   *Chunk[T]      // 前一個塊的指標
-	_      [24]byte       // 填充到 64 字節
+	data   unsafe.Pointer // 8 字節
+	size   int32          // 4 字節
+	offset int32          // 4 字節
+	next   *Chunk[T]      // 8 字節
+	prev   *Chunk[T]      // 8 字節
+	_      [32]byte       // 32 字節的填充
 }
 
 // 定義 TreeNode 結構，用於索引
@@ -38,8 +36,6 @@ type ChunkPipe[T any] struct {
 	validSize int32        // 有效大小
 	mu        sync.RWMutex // 讀寫鎖
 	pushMu    sync.Mutex   // Push 操作鎖
-	popMu     sync.Mutex   // Pop 操作鎖
-	cache     atomic.Value // 存儲 *ChunkCache[T]
 }
 
 // 工廠函數：創建 ChunkPipe
@@ -47,23 +43,8 @@ func NewChunkPipe[T any]() *ChunkPipe[T] {
 	return &ChunkPipe[T]{
 		bptree:   NewBPTree[T](),
 		skiplist: NewSkipList[T](),
-		pool:     NewMemoryPool(),
+		pool:     newMemoryPool(),
 	}
-}
-
-// 對齊到 CPU Cache line
-type alignedChunk[T any] struct {
-	data   unsafe.Pointer
-	size   int32
-	offset int32
-	_      [56]byte // 填充到 64 字節
-}
-
-// 確保結構體對齊到緩存行
-type alignedNode struct {
-	data unsafe.Pointer
-	next unsafe.Pointer
-	_    [48]byte // 填充到 64 字節
 }
 
 // ValueIterator 提供值迭代器
@@ -80,11 +61,4 @@ type ChunkIterator[T any] struct {
 	minSize int32 // 最小塊大小
 	maxSize int32 // 最大塊大小
 	chunk   []T   // 當前塊
-}
-
-// 添加快取結構
-type ChunkCache[T any] struct {
-	chunk *Chunk[T]
-	start int32
-	end   int32
 }

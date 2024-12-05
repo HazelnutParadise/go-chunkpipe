@@ -14,24 +14,23 @@ const (
 )
 
 type BPNode[T any] struct {
-	keys     unsafe.Pointer // 鍵值數組
-	data     unsafe.Pointer // 數據指針數組
-	children unsafe.Pointer // 子節點指針數組
-	next     unsafe.Pointer // 葉子節點鏈接
-	count    uint16         // 當前鍵數
-	isLeaf   bool           // 是否為葉子節點
-	_        [5]byte        // 填充到 64 字節
+	keys     unsafe.Pointer // 8 字節
+	data     unsafe.Pointer // 8 字節
+	children unsafe.Pointer // 8 字節
+	next     unsafe.Pointer // 8 字節
+	count    uint16         // 2 字節
+	isLeaf   bool           // 1 字節
+	_        [29]byte       // 29 字節填充
 }
 
 type BPTree[T any] struct {
 	root unsafe.Pointer
-	size uintptr
 	pool *MemoryPool
 }
 
 func NewBPTree[T any]() *BPTree[T] {
 	tree := &BPTree[T]{
-		pool: NewMemoryPool(),
+		pool: newMemoryPool(),
 	}
 
 	// 分配根節點

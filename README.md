@@ -36,7 +36,7 @@ import (
 ### 初始化
 
 ```go
-cp := chunkpipe.NewChunkPipe[int]()
+cp := chunkpipe.NewChunkPipe[type]()
 ```
 
 ### 基礎操作
