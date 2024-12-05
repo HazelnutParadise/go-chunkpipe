@@ -1,6 +1,7 @@
 package chunkpipe
 
 import (
+	"sync/atomic"
 	"unsafe"
 	_ "unsafe"
 )
@@ -39,8 +40,8 @@ func (cl *ChunkPipe[T]) Push(data []T) *ChunkPipe[T] {
 			cl.tail = block
 		}
 
-		cl.totalSize += dataLen
-		cl.validSize += dataLen
+		atomic.AddInt32(&cl.totalSize, int32(dataLen))
+		atomic.AddInt32(&cl.validSize, int32(dataLen))
 		return cl
 	}
 	// ... 原有的數據處理邏輯
@@ -105,7 +106,7 @@ func (cl *ChunkPipe[T]) Get(index int) (T, bool) {
 	cl.mu.RLock()
 	defer cl.mu.RUnlock()
 
-	if index < 0 || index >= cl.validSize {
+	if index < 0 || index >= int(cl.validSize) {
 		return zero, false
 	}
 
@@ -189,8 +190,8 @@ func (cl *ChunkPipe[T]) PopChunkFront() ([]T, bool) {
 	}
 
 	// 更新計數
-	cl.totalSize -= validCount
-	cl.validSize -= validCount
+	atomic.AddInt32(&cl.totalSize, -int32(validCount))
+	atomic.AddInt32(&cl.validSize, -int32(validCount))
 
 	return newData, true
 }
@@ -241,39 +242,53 @@ func (cl *ChunkPipe[T]) PopChunkEnd() ([]T, bool) {
 	}
 
 	// 更新計數
-	cl.totalSize -= validCount
-	cl.validSize -= validCount
+	atomic.AddInt32(&cl.totalSize, -int32(validCount))
+	atomic.AddInt32(&cl.validSize, -int32(validCount))
 
 	return newData, true
 }
 
 func (cl *ChunkPipe[T]) PopFront() (T, bool) {
 	var zero T
-	cl.popMu.Lock()
-	defer cl.popMu.Unlock()
-
+	cl.mu.RLock()
 	head := cl.head
 	if head == nil || cl.validSize == 0 {
+		cl.mu.RUnlock()
+		return zero, false
+	}
+	cl.mu.RUnlock()
+
+	// 快速路徑：使用原子操作
+	offset := atomic.LoadInt32(&head.offset)
+	if offset >= head.size {
+		// 慢路徑：需要更新鏈表
+		cl.mu.Lock()
+		defer cl.mu.Unlock()
+
+		next := head.next
+		if next != nil {
+			next.prev = nil
+			cl.head = next
+			// 預取下一個塊
+			_ = *(*byte)(next.data)
+		} else {
+			cl.head = nil
+			cl.tail = nil
+		}
+
+		// 回收塊
+		globalBlockCache.put((*Chunk[byte])(unsafe.Pointer(head)))
 		return zero, false
 	}
 
-	// 快速路徑：直接讀取並更新 offset
-	value := *(*T)(unsafe.Add(head.data, uintptr(head.offset)*unsafe.Sizeof(zero)))
-	head.offset++
-	cl.validSize--
-	cl.totalSize--
+	// 直接讀取值
+	ptr := unsafe.Add(head.data, uintptr(offset)*unsafe.Sizeof(zero))
+	value := *(*T)(ptr)
 
-	// 只在必要時更新鏈表
-	if head.offset >= head.size {
-		cl.head = head.next
-		if cl.head != nil {
-			cl.head.prev = nil
-		} else {
-			cl.tail = nil
-		}
-		// 回收塊
-		globalBlockCache.put((*Chunk[byte])(unsafe.Pointer(head)))
-	}
+	// 原子更新 offset
+	atomic.AddInt32(&head.offset, 1)
+	atomic.AddInt32(&cl.validSize, -1)
+	atomic.AddInt32(&cl.totalSize, -1)
 
 	return value, true
 }
@@ -328,39 +343,45 @@ func (cl *ChunkPipe[T]) removeTail() {
 
 func (cl *ChunkPipe[T]) PopEnd() (T, bool) {
 	var zero T
-	cl.mu.Lock()
-	defer cl.mu.Unlock()
-
-	// 快取常用變數
+	cl.mu.RLock()
 	tail := cl.tail
-	validSize := cl.validSize
-	if tail == nil || validSize == 0 {
+	if tail == nil || cl.validSize == 0 {
+		cl.mu.RUnlock()
+		return zero, false
+	}
+	cl.mu.RUnlock()
+
+	// 快速路徑：使用原子操作
+	size := atomic.LoadInt32(&tail.size)
+	if size <= tail.offset {
+		// 慢路徑：需要更新鏈表
+		cl.mu.Lock()
+		defer cl.mu.Unlock()
+
+		prev := tail.prev
+		if prev != nil {
+			prev.next = nil
+			cl.tail = prev
+			// 預取前一個塊
+			_ = *(*byte)(prev.data)
+		} else {
+			cl.head = nil
+			cl.tail = nil
+		}
+
+		// 回收塊
+		globalBlockCache.put((*Chunk[byte])(unsafe.Pointer(tail)))
 		return zero, false
 	}
 
-	// 快取 size 和 offset
-	size := tail.size
-	offset := tail.offset
+	// 原子減少 size
+	newSize := atomic.AddInt32(&tail.size, -1)
+	atomic.AddInt32(&cl.validSize, -1)
+	atomic.AddInt32(&cl.totalSize, -1)
 
-	// 使用指計算
-	ptr := unsafe.Add(tail.data,
-		uintptr(size-1)*unsafe.Sizeof(zero))
+	// 讀取值
+	ptr := unsafe.Add(tail.data, uintptr(newSize)*unsafe.Sizeof(zero))
 	value := *(*T)(ptr)
-
-	size--
-	tail.size = size
-	cl.validSize--
-	cl.totalSize--
-
-	if size <= offset {
-		prev := tail.prev
-		cl.tail = prev
-		if prev != nil {
-			prev.next = nil
-		} else {
-			cl.head = nil
-		}
-	}
 
 	return value, true
 }
@@ -562,8 +583,8 @@ func (cl *ChunkPipe[T]) PushBatch(data []T) *ChunkPipe[T] {
 		cl.tail = block
 	}
 
-	cl.totalSize += len(data)
-	cl.validSize += len(data)
+	atomic.AddInt32(&cl.totalSize, int32(len(data)))
+	atomic.AddInt32(&cl.validSize, int32(len(data)))
 	return cl
 }
 
@@ -571,7 +592,8 @@ func (cl *ChunkPipe[T]) prefetchNext(current *Chunk[T]) {
 	if current != nil && current.next != nil {
 		nextData := current.next.data
 		if nextData != nil {
-			prefetcht0(uintptr(nextData))
+			// 使用簡單的讀取作為預取
+			_ = *(*byte)(nextData)
 		}
 	}
 }

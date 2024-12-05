@@ -251,7 +251,7 @@ func TestLargeDataHandling(t *testing.T) {
 			cp.Push(data)
 
 			// 驗證大小
-			if cp.validSize != size {
+			if cp.validSize != int32(size) {
 				t.Errorf("Expected size %d, got %d", size, cp.validSize)
 			}
 
@@ -266,7 +266,7 @@ func TestLargeDataHandling(t *testing.T) {
 				}
 				count++
 			}
-			if count != size {
+			if count != int(size) {
 				t.Errorf("Expected length %d, got %d", size, count)
 			}
 		})
@@ -583,6 +583,66 @@ func BenchmarkConcurrentOperations(b *testing.B) {
 		for pb.Next() {
 			cp.Push([]int{1, 2, 3})
 			cp.PopFront()
+		}
+	})
+}
+
+func TestTreeOperations(t *testing.T) {
+	t.Run("InsertBlockToTree", func(t *testing.T) {
+		cp := NewChunkPipe[int]()
+		block := &Chunk[int]{
+			data:   unsafe.Pointer(&[1]int{1}),
+			size:   1,
+			offset: 0,
+		}
+		cp.insertBlockToTree(block)
+		// 驗證樹結構
+		if cp.root == nil {
+			t.Error("root should not be nil")
+		}
+	})
+}
+
+func TestPrefetch(t *testing.T) {
+	t.Run("PrefetchNext", func(t *testing.T) {
+		cp := NewChunkPipe[int]()
+		data := []int{1, 2, 3}
+		cp.Push(data)
+		cp.prefetchNext(cp.head)
+		// 驗證預取不會崩潰
+	})
+}
+
+func TestValueIteratorEdgeCases(t *testing.T) {
+	t.Run("EmptyIterator", func(t *testing.T) {
+		cp := NewChunkPipe[int]()
+		iter := cp.ValueIter()
+		if iter.Next() {
+			t.Error("Next should return false for empty iterator")
+		}
+		if iter.V() != 0 {
+			t.Error("V should return zero value for empty iterator")
+		}
+	})
+}
+
+func TestChunkIteratorEdgeCases(t *testing.T) {
+	t.Run("SmallChunks", func(t *testing.T) {
+		cp := NewChunkPipe[int]()
+		for i := 0; i < 100; i++ {
+			cp.Push([]int{i})
+		}
+		iter := cp.ChunkIter()
+		chunks := 0
+		for iter.Next() {
+			chunk := iter.V()
+			if len(chunk) < 1 {
+				t.Error("chunk size should be at least 1")
+			}
+			chunks++
+		}
+		if chunks == 0 {
+			t.Error("should have at least one chunk")
 		}
 	})
 }
