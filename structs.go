@@ -27,7 +27,6 @@ type TreeNode[T any] struct {
 // 主結構 ChunkPipe
 type ChunkPipe[T any] struct {
 	root      *TreeNode[T] // 原有的樹
-	bptree    *BPTree[T]   // B+ Tree 索引
 	skiplist  *SkipList[T] // Skip List 索引
 	pool      *MemoryPool  // 記憶體池
 	head      *Chunk[T]    // 頭節點
@@ -41,7 +40,6 @@ type ChunkPipe[T any] struct {
 // 工廠函數：創建 ChunkPipe
 func NewChunkPipe[T any]() *ChunkPipe[T] {
 	return &ChunkPipe[T]{
-		bptree:   NewBPTree[T](),
 		skiplist: NewSkipList[T](),
 		pool:     newMemoryPool(),
 	}
