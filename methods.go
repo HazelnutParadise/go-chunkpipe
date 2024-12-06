@@ -15,7 +15,7 @@ func (cl *ChunkPipe[T]) Push(data []T) *ChunkPipe[T] {
 		return cl
 	}
 
-	dataLen := len(data)
+	dataLen := int32(len(data))
 	// 小數據快速路徑 (<=32 bytes)
 	if dataLen <= 4 {
 		cl.pushMu.Lock()
@@ -27,7 +27,7 @@ func (cl *ChunkPipe[T]) Push(data []T) *ChunkPipe[T] {
 
 		block := &Chunk[T]{
 			data:   unsafe.Pointer(&stackData[0]),
-			size:   int32(dataLen),
+			size:   dataLen,
 			offset: 0,
 		}
 
@@ -40,8 +40,8 @@ func (cl *ChunkPipe[T]) Push(data []T) *ChunkPipe[T] {
 			cl.tail = block
 		}
 
-		atomic.AddInt32(&cl.totalSize, int32(dataLen))
-		atomic.AddInt32(&cl.validSize, int32(dataLen))
+		atomic.AddInt32(&cl.totalSize, dataLen)
+		atomic.AddInt32(&cl.validSize, dataLen)
 		return cl
 	}
 
@@ -52,7 +52,7 @@ func (cl *ChunkPipe[T]) Push(data []T) *ChunkPipe[T] {
 	// 分配新的數據塊
 	block := &Chunk[T]{
 		data:   unsafe.Pointer(&data[0]), // 直接使用輸入數據的指針
-		size:   int32(dataLen),
+		size:   dataLen,
 		offset: 0,
 	}
 
@@ -67,8 +67,8 @@ func (cl *ChunkPipe[T]) Push(data []T) *ChunkPipe[T] {
 	}
 
 	// 更新計數器
-	atomic.AddInt32(&cl.totalSize, int32(dataLen))
-	atomic.AddInt32(&cl.validSize, int32(dataLen))
+	atomic.AddInt32(&cl.totalSize, dataLen)
+	atomic.AddInt32(&cl.validSize, dataLen)
 
 	return cl
 }
@@ -78,6 +78,11 @@ func (cl *ChunkPipe[T]) Push(data []T) *ChunkPipe[T] {
 func (cl *ChunkPipe[T]) Get(index int) (T, bool) {
 	var zero T
 	elemSize := unsafe.Sizeof(zero)
+	int32Index := int32(index)
+
+	if int32Index < 0 {
+		return zero, false
+	}
 
 	// 快速路徑：檢查頭部（無需鎖）
 	head := (*Chunk[T])(atomic.LoadPointer(
@@ -92,7 +97,7 @@ func (cl *ChunkPipe[T]) Get(index int) (T, bool) {
 	validSize := size - offset
 
 	// 快速路徑：頭部訪問
-	if uint(index) < uint(validSize) {
+	if int32Index < validSize {
 		// 內聯指針計算
 		ptr := unsafe.Add(head.data,
 			uintptr(offset)*elemSize+uintptr(index)*elemSize)
@@ -100,25 +105,25 @@ func (cl *ChunkPipe[T]) Get(index int) (T, bool) {
 	}
 
 	// 檢查總大小
-	if uint(index) >= uint(atomic.LoadInt32(&cl.validSize)) {
+	if int32Index >= atomic.LoadInt32(&cl.validSize) {
 		return zero, false
 	}
 
 	// 慢路徑：需要遍歷
 	cl.mu.RLock()
 	current := head
-	pos := int(validSize)
+	pos := validSize
 
 	for current = current.next; current != nil; current = current.next {
 		offset = current.offset
 		size = current.size
-		blockSize := int(size - offset)
+		blockSize := size - offset
 		nextPos := pos + blockSize
 
-		if uint(index) < uint(nextPos) {
+		if int32Index < int32(nextPos) {
 			// 內聯指針計算
 			ptr := unsafe.Add(current.data,
-				uintptr(offset)*elemSize+uintptr(index-pos)*elemSize)
+				uintptr(offset)*elemSize+uintptr(int32Index-pos)*elemSize)
 			cl.mu.RUnlock()
 			return *(*T)(ptr), true
 		}
@@ -144,7 +149,7 @@ func (cl *ChunkPipe[T]) PopChunkFront() ([]T, bool) {
 	// 快取 size 和 offset
 	size := head.size
 	offset := head.offset
-	validCount := int(size - offset)
+	validCount := size - offset
 
 	if validCount <= 0 {
 		// 移除空塊
@@ -175,8 +180,8 @@ func (cl *ChunkPipe[T]) PopChunkFront() ([]T, bool) {
 	}
 
 	// 更新計數
-	atomic.AddInt32(&cl.totalSize, -int32(validCount))
-	atomic.AddInt32(&cl.validSize, -int32(validCount))
+	atomic.AddInt32(&cl.totalSize, -validCount)
+	atomic.AddInt32(&cl.validSize, -validCount)
 
 	return newData, true
 }
@@ -196,7 +201,7 @@ func (cl *ChunkPipe[T]) PopChunkEnd() ([]T, bool) {
 	// 快取 size 和 offset
 	size := tail.size
 	offset := tail.offset
-	validCount := int(size - offset)
+	validCount := size - offset
 
 	if validCount <= 0 {
 		// 移除塊
@@ -227,8 +232,8 @@ func (cl *ChunkPipe[T]) PopChunkEnd() ([]T, bool) {
 	}
 
 	// 更新計數
-	atomic.AddInt32(&cl.totalSize, -int32(validCount))
-	atomic.AddInt32(&cl.validSize, -int32(validCount))
+	atomic.AddInt32(&cl.totalSize, -validCount)
+	atomic.AddInt32(&cl.validSize, -validCount)
 
 	return newData, true
 }
@@ -285,54 +290,6 @@ func (cl *ChunkPipe[T]) PopFront() (T, bool) {
 		}
 	}
 }
-
-// // 抽取共用邏輯
-// func (cl *ChunkPipe[T]) removeHead() {
-// 	// 快取常用變數
-// 	head := cl.head
-// 	if head == nil {
-// 		return
-// 	}
-
-// 	// 快取 next 指針
-// 	next := head.next
-// 	cl.head = next
-
-// 	// 更新指針關係
-// 	if next != nil {
-// 		next.prev = nil
-// 	} else {
-// 		cl.tail = nil
-// 	}
-
-// 	// 清理原節點的指針
-// 	head.next = nil
-// 	head.prev = nil
-// }
-
-// // 新尾部移除方法
-// func (cl *ChunkPipe[T]) removeTail() {
-// 	// 快取常用變數
-// 	tail := cl.tail
-// 	if tail == nil {
-// 		return
-// 	}
-
-// 	// 快取 prev 指針
-// 	prev := tail.prev
-// 	cl.tail = prev
-
-// 	// 更新指針關係
-// 	if prev != nil {
-// 		prev.next = nil
-// 	} else {
-// 		cl.head = nil
-// 	}
-
-// 	// 清理原節點的指針
-// 	tail.next = nil
-// 	tail.prev = nil
-// }
 
 // 從尾部彈出數據
 func (cl *ChunkPipe[T]) PopEnd() (T, bool) {
@@ -391,9 +348,9 @@ func (cl *ChunkPipe[T]) ValueSlice() []T {
 	}
 
 	// Calculate total size needed
-	totalSize := 0
+	var totalSize int32 = 0
 	for current := cl.head; current != nil; current = current.next {
-		totalSize += int(current.size - current.offset)
+		totalSize += current.size - current.offset
 	}
 
 	// Create result slice with exact capacity
@@ -402,7 +359,7 @@ func (cl *ChunkPipe[T]) ValueSlice() []T {
 	// Safely append all values
 	for current := cl.head; current != nil; current = current.next {
 		if n := current.size - current.offset; n > 0 {
-			src := unsafe.Slice((*T)(current.data), int(current.size))
+			src := unsafe.Slice((*T)(current.data), current.size)
 			result = append(result, src[current.offset:current.size]...)
 		}
 	}
