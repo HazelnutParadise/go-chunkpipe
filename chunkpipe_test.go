@@ -295,10 +295,10 @@ func TestMemoryPool(t *testing.T) {
 		pool := newMemoryPool()
 
 		// 先分配一些記憶體
-		pool.Alloc(1024) // 分配 1KB
+		ptr := pool.Alloc(1024) // 分配 1KB
 
 		beforeSize := pool.Size()
-		pool.Free()
+		pool.Free(ptr, 1024) // 添加必要的參數
 		afterSize := pool.Size()
 
 		if beforeSize == 0 {

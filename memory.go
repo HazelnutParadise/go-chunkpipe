@@ -1,116 +1,178 @@
 package chunkpipe
 
 import (
+	"sync"
 	"sync/atomic"
 	"unsafe"
 )
 
-// MemoryPool 使用指標實現的記憶體池
+// 預定義的塊大小，用於分層管理
+const (
+	minBlockSize = 64
+	maxBlockSize = 4096
+)
+
+// MemoryPool 使用分層和緩存的記憶體池
 type MemoryPool struct {
-	blocks []*block
-	size   int64
+	sync.Mutex
+	layers    []*layer           // 不同大小的記憶體層
+	freeList  [][]unsafe.Pointer // 空閒記憶體列表
+	allocated int64              // 已分配的總大小
 }
 
-// block 代表一個記憶體塊
-type block struct {
-	data unsafe.Pointer
-	size uintptr
+// layer 代表一個特定大小的記憶體層
+type layer struct {
+	sync.Mutex
+	blockSize uintptr
+	blocks    []unsafe.Pointer
+	used      int32
 }
 
-// newMemoryPool 創建一個新的記憶體池
-func newMemoryPool() *MemoryPool {
-	return &MemoryPool{
-		blocks: make([]*block, 0),
-		size:   0,
-	}
-}
-
-// Alloc 分配指定大小的記憶體
-func (p *MemoryPool) Alloc(size uintptr) unsafe.Pointer {
-	// 直接分配記憶體
-	ptr := unsafe.Pointer((&make([]byte, size)[0]))
-
-	// 創建新的記憶體塊
-	b := &block{
-		data: ptr,
-		size: size,
-	}
-
-	// 添加到blocks並更新大小
-	p.blocks = append(p.blocks, b)
-	atomic.AddInt64(&p.size, int64(size))
-
-	return ptr
-}
-
-// Free 釋放所有分配的記憶體
-func (p *MemoryPool) Free() {
-	// 清空blocks
-	p.blocks = make([]*block, 0)
-	atomic.StoreInt64(&p.size, 0)
-}
-
-// Size 返回已分配的記憶體總大小
-func (p *MemoryPool) Size() int {
-	return int(atomic.LoadInt64(&p.size))
-}
-
-// blockCache 使用指標實現的塊緩存
+// 在文件頂部的 import 後面添加
 type blockCache struct {
+	sync.Mutex
 	head *cacheNode
 	tail *cacheNode
 	size int32
 }
 
-// cacheNode 代表緩存中的一個節點
 type cacheNode struct {
 	chunk *Chunk[byte]
 	next  *cacheNode
 }
 
-var globalBlockCache = &blockCache{
-	head: nil,
-	tail: nil,
-	size: 0,
-}
+var globalBlockCache = &blockCache{}
 
 func (c *blockCache) get() *Chunk[byte] {
-	size := atomic.LoadInt32(&c.size)
-	if size > 0 {
-		if atomic.CompareAndSwapInt32(&c.size, size, size-1) {
-			if c.head == nil {
-				return nil
-			}
-			chunk := c.head.chunk
-			c.head = c.head.next
-			if c.head == nil {
-				c.tail = nil
-			}
-			return chunk
-		}
+	c.Lock()
+	defer c.Unlock()
+	if c.head == nil {
+		return nil
 	}
-	return nil
+	chunk := c.head.chunk
+	c.head = c.head.next
+	if c.head == nil {
+		c.tail = nil
+	}
+	atomic.AddInt32(&c.size, -1)
+	return chunk
 }
 
 func (c *blockCache) put(chunk *Chunk[byte]) {
-	size := atomic.LoadInt32(&c.size)
-	if size < 1024 {
-		if atomic.CompareAndSwapInt32(&c.size, size, size+1) {
-			chunk.next = nil
-			chunk.prev = nil
+	c.Lock()
+	defer c.Unlock()
+	if atomic.LoadInt32(&c.size) >= 1024 {
+		return
+	}
+	chunk.next = nil
+	chunk.prev = nil
+	node := &cacheNode{chunk: chunk}
+	if c.tail == nil {
+		c.head = node
+		c.tail = node
+	} else {
+		c.tail.next = node
+		c.tail = node
+	}
+	atomic.AddInt32(&c.size, 1)
+}
 
-			node := &cacheNode{
-				chunk: chunk,
-				next:  nil,
-			}
+// newMemoryPool 創建一個新的記憶體池
+func newMemoryPool() *MemoryPool {
+	p := &MemoryPool{
+		layers:    make([]*layer, 6), // 支援 6 種不同大小
+		freeList:  make([][]unsafe.Pointer, 6),
+		allocated: 0,
+	}
 
-			if c.tail == nil {
-				c.head = node
-				c.tail = node
-			} else {
-				c.tail.next = node
-				c.tail = node
-			}
+	// 初始化不同大小的層
+	sizes := []uintptr{64, 256, 1024, 4096, 16384, 65536}
+	for i, size := range sizes {
+		p.layers[i] = &layer{
+			blockSize: size,
+			blocks:    make([]unsafe.Pointer, 0, 64),
+		}
+		p.freeList[i] = make([]unsafe.Pointer, 0, 64)
+	}
+
+	return p
+}
+
+// findLayer 找到適合大小的層
+func (p *MemoryPool) findLayer(size uintptr) int {
+	for i, l := range p.layers {
+		if size <= l.blockSize {
+			return i
 		}
 	}
+	return -1
+}
+
+// Alloc 分配指定大小的記憶體
+func (p *MemoryPool) Alloc(size uintptr) unsafe.Pointer {
+	layerIndex := p.findLayer(size)
+	if layerIndex == -1 {
+		// 大小超過最大層，直接分配
+		ptr := unsafe.Pointer((&make([]byte, size)[0]))
+		atomic.AddInt64(&p.allocated, int64(size))
+		return ptr
+	}
+
+	layer := p.layers[layerIndex]
+	layer.Lock()
+	defer layer.Unlock()
+
+	// 先檢查空閒列表
+	if len(p.freeList[layerIndex]) > 0 {
+		ptr := p.freeList[layerIndex][len(p.freeList[layerIndex])-1]
+		p.freeList[layerIndex] = p.freeList[layerIndex][:len(p.freeList[layerIndex])-1]
+		atomic.AddInt64(&p.allocated, int64(layer.blockSize))
+		return ptr
+	}
+
+	// 分配新的記憶體塊
+	ptr := unsafe.Pointer((&make([]byte, layer.blockSize)[0]))
+	atomic.AddInt32(&layer.used, 1)
+	atomic.AddInt64(&p.allocated, int64(layer.blockSize))
+	return ptr
+}
+
+// Free 釋放記憶體到空閒列表
+func (p *MemoryPool) Free(ptr unsafe.Pointer, size uintptr) {
+	layerIndex := p.findLayer(size)
+	if layerIndex == -1 {
+		atomic.AddInt64(&p.allocated, -int64(size))
+		return
+	}
+
+	layer := p.layers[layerIndex]
+	layer.Lock()
+	defer layer.Unlock()
+
+	// 將記憶體塊加入空閒列表
+	if len(p.freeList[layerIndex]) < cap(p.freeList[layerIndex]) {
+		p.freeList[layerIndex] = append(p.freeList[layerIndex], ptr)
+		atomic.AddInt64(&p.allocated, -int64(layer.blockSize))
+	}
+}
+
+// Size 返回已分配的記憶體總大小
+func (p *MemoryPool) Size() int {
+	return int(atomic.LoadInt64(&p.allocated))
+}
+
+// Reset 重置記憶體池
+func (p *MemoryPool) Reset() {
+	p.Lock()
+	defer p.Unlock()
+
+	for i := range p.layers {
+		p.layers[i].Lock()
+		p.layers[i].blocks = make([]unsafe.Pointer, 0, 64)
+		p.layers[i].used = 0
+		p.layers[i].Unlock()
+
+		p.freeList[i] = make([]unsafe.Pointer, 0, 64)
+	}
+	atomic.StoreInt64(&p.allocated, 0)
 }
