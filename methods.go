@@ -527,30 +527,21 @@ func (it *ValueIterator[T]) Next() bool {
 		return false
 	}
 
-	// 檢查當前塊是否有效
-	if int(it.pos) >= int(it.current.size-it.current.offset) {
-		it.current = it.current.next
-		it.pos = 0
-		return it.current != nil
-	}
-
-	// 預取下一個塊
-	if it.current.next != nil &&
-		int(it.pos) >= int(it.current.size-it.current.offset)-4 {
-		nextData := it.current.next.data
-		if nextData != nil {
-			prefetchData(nextData)
-		}
-	}
-
+	// 先增加位置
 	it.pos++
-	return true
-}
 
-//go:noinline
-func prefetchData(ptr unsafe.Pointer) {
-	// 預取 64 bytes
-	_ = *(*[8]uint64)(ptr)
+	// 如果超出當前塊的有效範圍，移動到下一個塊
+	validSize := it.current.size - it.current.offset
+	for int(it.pos) > int(validSize) {
+		it.current = it.current.next
+		if it.current == nil {
+			return false
+		}
+		it.pos = 1 // 從新塊的第一個位置開始
+		validSize = it.current.size - it.current.offset
+	}
+
+	return true
 }
 
 func (it *ValueIterator[T]) V() T {
@@ -559,14 +550,16 @@ func (it *ValueIterator[T]) V() T {
 		return zero
 	}
 
-	// 確保 pos 在有效範圍內
-	if int(it.pos-1) >= int(it.current.size-it.current.offset) {
-		return zero
-	}
-
+	// 直接使用 pos-1 訪問當前位置的值
 	ptr := unsafe.Add(it.current.data,
 		uintptr(it.current.offset+it.pos-1)*unsafe.Sizeof(zero))
 	return *(*T)(ptr)
+}
+
+//go:noinline
+func prefetchData(ptr unsafe.Pointer) {
+	// 預取 64 bytes
+	_ = *(*[8]uint64)(ptr)
 }
 
 // ChunkIterator 的方法
@@ -577,19 +570,12 @@ func (it *ChunkIterator[T]) Next() bool {
 
 	size := it.current.size
 	offset := it.current.offset
-	if size <= offset {
-		it.current = it.current.next
-		return it.Next()
-	}
-
 	validCount := size - offset
-	if validCount < it.minSize && it.current.next != nil {
+
+	// 移除最小大小的檢查，讓所有塊都能被迭代
+	if validCount <= 0 {
 		it.current = it.current.next
 		return it.Next()
-	}
-
-	if validCount > it.maxSize {
-		validCount = it.maxSize
 	}
 
 	// 準備當前塊
@@ -599,11 +585,8 @@ func (it *ChunkIterator[T]) Next() bool {
 	srcSlice := unsafe.Slice((*T)(src), validCount)
 	copy(it.chunk, srcSlice)
 
-	if validCount >= it.maxSize {
-		it.current.offset += validCount
-	} else {
-		it.current = it.current.next
-	}
+	// 移動到下一個塊
+	it.current = it.current.next
 
 	return true
 }
