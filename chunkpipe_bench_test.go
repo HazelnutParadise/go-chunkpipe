@@ -249,20 +249,6 @@ func BenchmarkIterators(b *testing.B) {
 	}
 }
 
-// 基準測試：內存操作
-func BenchmarkMemoryOperations(b *testing.B) {
-	sizes := []int{64, 1024, 4096}
-	for _, size := range sizes {
-		b.Run(fmt.Sprintf("Alloc-%d", size), func(b *testing.B) {
-			pool := newMemoryPool()
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				pool.Alloc(uintptr(size))
-			}
-		})
-	}
-}
-
 // 基準測試：並發操作
 func BenchmarkConcurrentOperations(b *testing.B) {
 	cp := NewChunkPipe[int]()

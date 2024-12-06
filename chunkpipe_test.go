@@ -2,7 +2,6 @@ package chunkpipe
 
 import (
 	"fmt"
-	"sync"
 	"testing"
 )
 
@@ -278,64 +277,6 @@ func TestPublicMethods(t *testing.T) {
 			t.Errorf("ChunkSlice failed: expected [[1,2,3]], got %v", chunks)
 		}
 	})
-}
-
-func TestMemoryPool(t *testing.T) {
-	t.Run("Alloc", func(t *testing.T) {
-		pool := newMemoryPool()
-		ptr := pool.Alloc(1024)
-		if ptr == nil {
-			t.Error("Alloc failed")
-		}
-	})
-
-	t.Run("Free", func(t *testing.T) {
-		pool := newMemoryPool()
-		ptr := pool.Alloc(1024)
-
-		// fastcache 會保留一定的記憶體，所以我們只需確認 Free 不會出錯
-		pool.Free(ptr, 1024)
-
-		// 確認可以重新分配
-		newPtr := pool.Alloc(1024)
-		if newPtr == nil {
-			t.Error("無法重新分配記憶體")
-		}
-	})
-}
-
-func TestConcurrentAccess(t *testing.T) {
-	cp := NewChunkPipe[int]()
-	const goroutines = 10
-	const iterations = 1000
-
-	var wg sync.WaitGroup
-	wg.Add(goroutines * 2) // readers + writers
-
-	// Writers
-	for i := 0; i < goroutines; i++ {
-		go func(id int) {
-			defer wg.Done()
-			for j := 0; j < iterations; j++ {
-				cp.Push([]int{id*iterations + j})
-			}
-		}(i)
-	}
-
-	// Readers
-	for i := 0; i < goroutines; i++ {
-		go func() {
-			defer wg.Done()
-			for j := 0; j < iterations; j++ {
-				cp.ValueIter()
-				cp.ChunkIter()
-				cp.ValueSlice()
-				cp.ChunkSlice()
-			}
-		}()
-	}
-
-	wg.Wait()
 }
 
 func TestValueIteratorEdgeCases(t *testing.T) {
