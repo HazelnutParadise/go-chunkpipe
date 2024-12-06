@@ -137,10 +137,19 @@ func (cl *ChunkPipe[T]) ValueSlice() []T {
 	if len(cl.list) == 0 {
 		return []T{}
 	}
-	size := cl.list[len(cl.list)-1].off - cl.offset
-	ret := make([]T, size)
-	k := 0
 
+	size := cl.list[len(cl.list)-1].off - cl.offset
+	// 從 cl.valuePool 中獲取切片
+	ret := cl.valuePool.Get().([]T)
+	// 確保切片容量足夠
+	if cap(ret) < size {
+		cl.valuePool.Put(ret)
+		ret = make([]T, size)
+	} else {
+		ret = ret[:size]
+	}
+
+	k := 0
 	for i := range cl.list {
 		for _, v := range cl.list[i].val {
 			ret[k] = v
@@ -158,7 +167,16 @@ func (cl *ChunkPipe[T]) ChunkSlice() [][]T {
 	if len(cl.list) == 0 {
 		return [][]T{}
 	}
-	ret := make([][]T, len(cl.list))
+
+	// 從 cl.chunkPool 中獲取切片
+	ret := cl.chunkPool.Get().([][]T)
+	// 確保切片容量足夠
+	if cap(ret) < len(cl.list) {
+		cl.chunkPool.Put(ret)
+		ret = make([][]T, len(cl.list))
+	} else {
+		ret = ret[:len(cl.list)]
+	}
 
 	for i := range ret {
 		ret[i] = cl.list[i].val
@@ -216,4 +234,19 @@ func (it *ChunkIterator[T]) V() []T {
 	}
 	var zero []T
 	return zero
+}
+
+// 當使用完切片後，應該調用這些方法將切片放回 pool
+func (cl *ChunkPipe[T]) PutValueSlice(slice []T) {
+	if cap(slice) > 0 {
+		slice = slice[:0]
+		cl.valuePool.Put(slice)
+	}
+}
+
+func (cl *ChunkPipe[T]) PutChunkSlice(slice [][]T) {
+	if cap(slice) > 0 {
+		slice = slice[:0]
+		cl.chunkPool.Put(slice)
+	}
 }
