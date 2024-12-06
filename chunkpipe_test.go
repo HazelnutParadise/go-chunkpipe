@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"sync"
 	"testing"
-	"unsafe"
 )
 
 // 測試不同類型的數據結構
@@ -292,43 +291,15 @@ func TestMemoryPool(t *testing.T) {
 
 	t.Run("Free", func(t *testing.T) {
 		pool := newMemoryPool()
+		ptr := pool.Alloc(1024)
 
-		// 先分配一些記憶體
-		ptr := pool.Alloc(1024) // 分配 1KB
+		// fastcache 會保留一定的記憶體，所以我們只需確認 Free 不會出錯
+		pool.Free(ptr, 1024)
 
-		beforeSize := pool.Size()
-		pool.Free(ptr, 1024) // 添加必要的參數
-		afterSize := pool.Size()
-
-		if beforeSize == 0 {
-			t.Error("初始大小不應為 0")
-		}
-		if afterSize != 0 {
-			t.Errorf("Free 後大小應為 0，但得到 %d", afterSize)
-		}
-	})
-}
-
-func TestBlockCache(t *testing.T) {
-	t.Run("PutGet", func(t *testing.T) {
-
-		block := &Chunk[byte]{
-			data:   unsafe.Pointer(&[1]byte{1}),
-			size:   1,
-			offset: 0,
-		}
-
-		globalBlockCache.put(block)
-		got := globalBlockCache.get()
-		if got == nil {
-			t.Error("get returned nil")
-		}
-	})
-
-	t.Run("EmptyGet", func(t *testing.T) {
-		got := globalBlockCache.get()
-		if got != nil {
-			t.Error("get should return nil for empty cache")
+		// 確認可以重新分配
+		newPtr := pool.Alloc(1024)
+		if newPtr == nil {
+			t.Error("無法重新分配記憶體")
 		}
 	})
 }

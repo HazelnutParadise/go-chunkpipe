@@ -41,7 +41,7 @@ func BenchmarkPop(b *testing.B) {
 			data[i] = byte(i % 256)
 		}
 
-		b.Run("ChunkPipe-PopFront-"+string(rune(size)), func(b *testing.B) {
+		b.Run(fmt.Sprintf("ChunkPipe-PopFront-%d", size), func(b *testing.B) {
 			cp := NewChunkPipe[byte]()
 			cp.Push(data)
 			b.ResetTimer()
@@ -53,7 +53,7 @@ func BenchmarkPop(b *testing.B) {
 			}
 		})
 
-		b.Run("ChunkPipe-PopEnd-"+string(rune(size)), func(b *testing.B) {
+		b.Run(fmt.Sprintf("ChunkPipe-PopEnd-%d", size), func(b *testing.B) {
 			cp := NewChunkPipe[byte]()
 			cp.Push(data)
 			b.ResetTimer()
@@ -65,7 +65,7 @@ func BenchmarkPop(b *testing.B) {
 			}
 		})
 
-		b.Run("Slice-PopFront-"+string(rune(size)), func(b *testing.B) {
+		b.Run(fmt.Sprintf("Slice-PopFront-%d", size), func(b *testing.B) {
 			slice := make([]byte, size)
 			copy(slice, data)
 			b.ResetTimer()
@@ -79,7 +79,7 @@ func BenchmarkPop(b *testing.B) {
 			}
 		})
 
-		b.Run("Slice-PopEnd-"+string(rune(size)), func(b *testing.B) {
+		b.Run(fmt.Sprintf("Slice-PopEnd-%d", size), func(b *testing.B) {
 			slice := make([]byte, size)
 			copy(slice, data)
 			b.ResetTimer()
@@ -93,7 +93,7 @@ func BenchmarkPop(b *testing.B) {
 			}
 		})
 
-		b.Run("ChunkPipe-PopChunkFront-"+string(rune(size)), func(b *testing.B) {
+		b.Run(fmt.Sprintf("ChunkPipe-PopChunkFront-%d", size), func(b *testing.B) {
 			cp := NewChunkPipe[byte]()
 			cp.Push(data)
 			b.ResetTimer()
@@ -105,7 +105,7 @@ func BenchmarkPop(b *testing.B) {
 			}
 		})
 
-		b.Run("ChunkPipe-PopChunkEnd-"+string(rune(size)), func(b *testing.B) {
+		b.Run(fmt.Sprintf("ChunkPipe-PopChunkEnd-%d", size), func(b *testing.B) {
 			cp := NewChunkPipe[byte]()
 			cp.Push(data)
 			b.ResetTimer()
@@ -117,7 +117,7 @@ func BenchmarkPop(b *testing.B) {
 			}
 		})
 
-		b.Run("Slice-PopChunk-"+string(rune(size)), func(b *testing.B) {
+		b.Run(fmt.Sprintf("Slice-PopChunk-%d", size), func(b *testing.B) {
 			slice := make([]byte, size)
 			copy(slice, data)
 			b.ResetTimer()

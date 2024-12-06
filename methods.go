@@ -269,7 +269,7 @@ func (cl *ChunkPipe[T]) PopFront() (T, bool) {
 			cl.mu.Unlock()
 
 			// 回收塊
-			globalBlockCache.put((*Chunk[byte])(unsafe.Pointer(head)))
+			cl.pool.Free(unsafe.Pointer(head), unsafe.Sizeof(*head))
 			return zero, false
 		}
 
@@ -364,7 +364,7 @@ func (cl *ChunkPipe[T]) PopEnd() (T, bool) {
 		}
 
 		// 回收塊
-		globalBlockCache.put((*Chunk[byte])(unsafe.Pointer(tail)))
+		cl.pool.Free(unsafe.Pointer(tail), unsafe.Sizeof(*tail))
 		return zero, false
 	}
 
