@@ -5,134 +5,174 @@ import (
 	"testing"
 )
 
-// 基準測試：插入操作
-func BenchmarkPush(b *testing.B) {
-	sizes := []int{10, 100, 1000, 10000, 100000, 1000000}
-	for _, size := range sizes {
-		data := make([]byte, size)
-		for i := range data {
-			data[i] = byte(i % 256)
+func benchmarkPush(b *testing.B, n, m int) {
+	data := make([][]byte, m)
+	for i := range data {
+		data[i] = make([]byte, n)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		cp := NewChunkPipe[byte]()
+		for j := 0; j < m; j++ {
+			cp.Push(data[j])
 		}
-
-		b.Run(fmt.Sprintf("ChunkPipe-%d", size), func(b *testing.B) {
-			cp := NewChunkPipe[byte]()
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				cp.Push(data)
-			}
-		})
-
-		b.Run(fmt.Sprintf("Slice-%d", size), func(b *testing.B) {
-			var slice []byte
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				slice = append(slice, data...)
-			}
-		})
 	}
 }
 
-// 基準測試：彈出操作
-func BenchmarkPop(b *testing.B) {
-	sizes := []int{10, 100, 1000, 10000}
-	for _, size := range sizes {
-		data := make([]byte, size)
-		for i := range data {
-			data[i] = byte(i % 256)
-		}
+func BenchmarkPush10x10000(b *testing.B) {
+	benchmarkPush(b, 10, 10000)
+}
 
-		b.Run(fmt.Sprintf("ChunkPipe-PopFront-%d", size), func(b *testing.B) {
-			cp := NewChunkPipe[byte]()
-			cp.Push(data)
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				if i%size == 0 {
-					cp.Push(data)
-				}
-				cp.PopFront()
-			}
-		})
+func BenchmarkPush100x1000(b *testing.B) {
+	benchmarkPush(b, 100, 1000)
+}
 
-		b.Run(fmt.Sprintf("ChunkPipe-PopEnd-%d", size), func(b *testing.B) {
-			cp := NewChunkPipe[byte]()
-			cp.Push(data)
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				if i%size == 0 {
-					cp.Push(data)
-				}
-				cp.PopEnd()
-			}
-		})
+func BenchmarkPush1000x100(b *testing.B) {
+	benchmarkPush(b, 1000, 100)
+}
 
-		b.Run(fmt.Sprintf("Slice-PopFront-%d", size), func(b *testing.B) {
-			slice := make([]byte, size)
-			copy(slice, data)
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				if i%size == 0 {
-					slice = append(slice, data...)
-				}
-				if len(slice) > 0 {
-					slice = slice[1:]
-				}
-			}
-		})
+func BenchmarkPush10000x10(b *testing.B) {
+	benchmarkPush(b, 10000, 10)
+}
 
-		b.Run(fmt.Sprintf("Slice-PopEnd-%d", size), func(b *testing.B) {
-			slice := make([]byte, size)
-			copy(slice, data)
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				if i%size == 0 {
-					slice = append(slice, data...)
-				}
-				if len(slice) > 0 {
-					slice = slice[:len(slice)-1]
-				}
-			}
-		})
-
-		b.Run(fmt.Sprintf("ChunkPipe-PopChunkFront-%d", size), func(b *testing.B) {
-			cp := NewChunkPipe[byte]()
-			cp.Push(data)
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				if i%size == 0 {
-					cp.Push(data)
-				}
-				cp.PopChunkFront()
-			}
-		})
-
-		b.Run(fmt.Sprintf("ChunkPipe-PopChunkEnd-%d", size), func(b *testing.B) {
-			cp := NewChunkPipe[byte]()
-			cp.Push(data)
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				if i%size == 0 {
-					cp.Push(data)
-				}
-				cp.PopChunkEnd()
-			}
-		})
-
-		b.Run(fmt.Sprintf("Slice-PopChunk-%d", size), func(b *testing.B) {
-			slice := make([]byte, size)
-			copy(slice, data)
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				if i%size == 0 {
-					slice = append(slice, data...)
-				}
-				if len(slice) > 0 {
-					chunk := make([]byte, len(slice))
-					copy(chunk, slice)
-					slice = slice[:0]
-				}
-			}
-		})
+func generateData(n, m int) *ChunkPipe[byte] {
+	data := make([][]byte, m)
+	for i := range data {
+		data[i] = make([]byte, n)
 	}
+
+	cp := NewChunkPipe[byte]()
+	for j := 0; j < m; j++ {
+		cp.Push(data[j])
+	}
+	return cp
+}
+
+func benchmarkPopEnd(b *testing.B, n int, m int) {
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		cp := generateData(n, m)
+		b.StartTimer()
+		for j := 0; j < n*m; j++ {
+			cp.PopEnd()
+		}
+	}
+}
+
+func benchmarkPopFront(b *testing.B, n int, m int) {
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		cp := generateData(n, m)
+		b.StartTimer()
+		for j := 0; j < n*m; j++ {
+			cp.PopFront()
+		}
+	}
+}
+
+func benchmarkPopChunkEnd(b *testing.B, n int, m int) {
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		cp := generateData(n, m)
+		b.StartTimer()
+		for j := 0; j < m; j++ {
+			cp.PopChunkEnd()
+		}
+	}
+}
+
+func benchmarkPopChunkFront(b *testing.B, n int, m int) {
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		cp := generateData(n, m)
+		b.StartTimer()
+		for j := 0; j < m; j++ {
+			cp.PopChunkFront()
+		}
+	}
+}
+
+func benchmarkGet(b *testing.B, n int, m int) {
+	cp := generateData(n, m)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for j := 0; j < n*m; j++ {
+			cp.Get(j)
+		}
+	}
+}
+
+func BenchmarkPopEnd10x10000(b *testing.B) {
+	benchmarkPopEnd(b, 10, 10000)
+}
+
+func BenchmarkPopEnd100x1000(b *testing.B) {
+	benchmarkPopEnd(b, 100, 1000)
+}
+
+func BenchmarkPopEnd1000x100(b *testing.B) {
+	benchmarkPopEnd(b, 1000, 100)
+}
+
+func BenchmarkPopEnd10000x10(b *testing.B) {
+	benchmarkPopEnd(b, 10000, 10)
+}
+
+func BenchmarkPopChunkEnd10x10000(b *testing.B) {
+	benchmarkPopChunkEnd(b, 10, 10000)
+}
+
+func BenchmarkPopChunkEnd100x1000(b *testing.B) {
+	benchmarkPopChunkEnd(b, 100, 1000)
+}
+
+func BenchmarkPopChunkEnd1000x100(b *testing.B) {
+	benchmarkPopChunkEnd(b, 1000, 100)
+}
+
+func BenchmarkPopFront10x10000(b *testing.B) {
+	benchmarkPopFront(b, 10, 10000)
+}
+
+func BenchmarkPopFront100x1000(b *testing.B) {
+	benchmarkPopFront(b, 100, 1000)
+}
+
+func BenchmarkPopFront1000x100(b *testing.B) {
+	benchmarkPopFront(b, 1000, 100)
+}
+
+func BenchmarkPopFront10000x10(b *testing.B) {
+	benchmarkPopFront(b, 10000, 10)
+}
+
+func BenchmarkPopChunkFront10x10000(b *testing.B) {
+	benchmarkPopChunkFront(b, 10, 10000)
+}
+
+func BenchmarkPopChunkFront100x1000(b *testing.B) {
+	benchmarkPopChunkFront(b, 100, 1000)
+}
+
+func BenchmarkPopChunkFront1000x100(b *testing.B) {
+	benchmarkPopChunkFront(b, 1000, 100)
+}
+
+func BenchmarkGet10x10000(b *testing.B) {
+	benchmarkGet(b, 10, 10000)
+}
+
+func BenchmarkGet100x1000(b *testing.B) {
+	benchmarkGet(b, 100, 1000)
+}
+
+func BenchmarkGet1000x100(b *testing.B) {
+	benchmarkGet(b, 1000, 100)
+}
+
+func BenchmarkGet10000x10(b *testing.B) {
+	benchmarkGet(b, 10000, 10)
 }
 
 // 基準測試：迭代器操作
@@ -264,70 +304,6 @@ func BenchmarkMemoryUsage(b *testing.B) {
 				iter := cp.ChunkIter()
 				for iter.Next() {
 					_ = iter.V()
-				}
-			}
-		})
-	}
-}
-
-// 基準測試：隨機訪問操作
-func BenchmarkGet(b *testing.B) {
-	sizes := []int{100, 1000, 10000}
-	for _, size := range sizes {
-		data := make([]byte, size)
-		for i := range data {
-			data[i] = byte(i % 256)
-		}
-
-		b.Run(fmt.Sprintf("ChunkPipe-Get-%d", size), func(b *testing.B) {
-			cp := NewChunkPipe[byte]()
-			cp.Push(data)
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				index := i % size
-				_, _ = cp.Get(index)
-			}
-		})
-
-		b.Run(fmt.Sprintf("Slice-Get-%d", size), func(b *testing.B) {
-			slice := make([]byte, size)
-			copy(slice, data)
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				index := i % size
-				_ = slice[index]
-			}
-		})
-	}
-}
-
-// 基準測試：批量推送操作
-func BenchmarkPushBatch(b *testing.B) {
-	sizes := []int{100, 1000, 10000, 100000}
-	for _, size := range sizes {
-		data := make([]byte, size)
-		for i := range data {
-			data[i] = byte(i % 256)
-		}
-
-		b.Run(fmt.Sprintf("ChunkPipe-Push-%d", size), func(b *testing.B) {
-			cp := NewChunkPipe[byte]()
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				cp.Push(data)
-				if i%100 == 99 {
-					cp = NewChunkPipe[byte]()
-				}
-			}
-		})
-
-		b.Run(fmt.Sprintf("Slice-Append-%d", size), func(b *testing.B) {
-			var slice []byte
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				slice = append(slice, data...)
-				if i%100 == 99 {
-					slice = nil // 定期重置
 				}
 			}
 		})
