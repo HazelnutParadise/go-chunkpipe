@@ -6,12 +6,6 @@ import (
 	"unsafe"
 )
 
-// 預定義的塊大小，用於分層管理
-const (
-	minBlockSize = 64
-	maxBlockSize = 4096
-)
-
 // MemoryPool 使用分層和緩存的記憶體池
 type MemoryPool struct {
 	sync.Mutex
