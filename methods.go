@@ -73,55 +73,6 @@ func (cl *ChunkPipe[T]) Push(data []T) *ChunkPipe[T] {
 	return cl
 }
 
-func (cl *ChunkPipe[T]) insertBlockToTree(block *Chunk[T]) {
-	if block == nil {
-		return
-	}
-
-	// 快取常用計算結果
-	blockSize := int(block.size)
-	validSize := int(block.size - block.offset)
-
-	newNode := &TreeNode[T]{
-		sum:       blockSize,
-		validSize: validSize,
-		blockAddr: unsafe.Pointer(block),
-	}
-
-	// 快取根節點
-	root := cl.root
-	if root == nil {
-		cl.root = newNode
-		return
-	}
-
-	// 使用局部變數追蹤路徑
-	current := root
-	for {
-		// 更新節點統計
-		current.sum += blockSize
-		current.validSize += validSize
-
-		// 選擇插入路徑
-		if current.left == nil {
-			current.left = newNode
-			return
-		}
-
-		if current.right == nil {
-			current.right = newNode
-			return
-		}
-
-		// 平衡樹
-		if current.left.sum <= current.right.sum {
-			current = current.left
-		} else {
-			current = current.right
-		}
-	}
-}
-
 //go:nosplit
 //go:noinline
 func (cl *ChunkPipe[T]) Get(index int) (T, bool) {
@@ -537,12 +488,6 @@ func (it *ValueIterator[T]) V() T {
 	return *(*T)(ptr)
 }
 
-//go:noinline
-func prefetchData(ptr unsafe.Pointer) {
-	// 預取 64 bytes
-	_ = *(*[8]uint64)(ptr)
-}
-
 // ChunkIterator 的方法
 func (it *ChunkIterator[T]) Next() bool {
 	if it.current == nil {
@@ -574,51 +519,4 @@ func (it *ChunkIterator[T]) Next() bool {
 
 func (it *ChunkIterator[T]) V() []T {
 	return it.chunk
-}
-
-// 添加批量操作方法
-func (cl *ChunkPipe[T]) PushBatch(data []T) *ChunkPipe[T] {
-	if len(data) == 0 {
-		return cl
-	}
-
-	// 使用單次鎖定
-	cl.pushMu.Lock()
-	defer cl.pushMu.Unlock()
-
-	// 預分配足夠大的塊
-	blockSize := (len(data) + 1023) &^ 1023 // 齊到 1KB
-	block := &Chunk[T]{
-		data:   cl.pool.Alloc(uintptr(blockSize) * unsafe.Sizeof(data[0])),
-		size:   int32(len(data)),
-		offset: 0,
-	}
-
-	// 使用 SIMD 複製
-	simdCopy(block.data, unsafe.Pointer(&data[0]),
-		uintptr(len(data))*unsafe.Sizeof(data[0]))
-
-	// 更新鏈表
-	if cl.tail == nil {
-		cl.head = block
-		cl.tail = block
-	} else {
-		block.prev = cl.tail
-		cl.tail.next = block
-		cl.tail = block
-	}
-
-	atomic.AddInt32(&cl.totalSize, int32(len(data)))
-	atomic.AddInt32(&cl.validSize, int32(len(data)))
-	return cl
-}
-
-func (cl *ChunkPipe[T]) prefetchNext(current *Chunk[T]) {
-	if current != nil && current.next != nil {
-		nextData := current.next.data
-		if nextData != nil {
-			// 使用簡單的讀取作為預取
-			_ = *(*byte)(nextData)
-		}
-	}
 }

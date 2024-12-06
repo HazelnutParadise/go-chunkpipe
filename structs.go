@@ -15,18 +15,8 @@ type Chunk[T any] struct {
 	_      [32]byte       // 32 字節的填充
 }
 
-// 定義 TreeNode 結構，用於索引
-type TreeNode[T any] struct {
-	sum       int            // 當前節點及子節點的數據總大小
-	validSize int            // 實際可用的數據大小（考慮offset後）
-	blockAddr unsafe.Pointer // 指向數據塊的指針
-	left      *TreeNode[T]   // 左子節點
-	right     *TreeNode[T]   // 右子節點
-}
-
 // 主結構 ChunkPipe
 type ChunkPipe[T any] struct {
-	root      *TreeNode[T] // 原有的樹
 	pool      *MemoryPool  // 記憶體池
 	head      *Chunk[T]    // 頭節點
 	tail      *Chunk[T]    // 尾節點

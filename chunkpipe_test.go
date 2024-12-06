@@ -391,33 +391,6 @@ func TestConcurrentAccess(t *testing.T) {
 	wg.Wait()
 }
 
-func TestTreeOperations(t *testing.T) {
-	t.Run("InsertBlockToTree", func(t *testing.T) {
-		cp := NewChunkPipe[int]()
-
-		block := &Chunk[int]{
-			data:   unsafe.Pointer(&[1]int{1}),
-			size:   1,
-			offset: 0,
-		}
-		cp.insertBlockToTree(block)
-		// 驗證樹結構
-		if cp.root == nil {
-			t.Error("root should not be nil")
-		}
-	})
-}
-
-func TestPrefetch(t *testing.T) {
-	t.Run("PrefetchNext", func(t *testing.T) {
-		cp := NewChunkPipe[int]()
-		data := []int{1, 2, 3}
-		cp.Push(data)
-		cp.prefetchNext(cp.head)
-		// 驗證預取不會崩潰
-	})
-}
-
 func TestValueIteratorEdgeCases(t *testing.T) {
 	t.Run("EmptyIterator", func(t *testing.T) {
 		cp := NewChunkPipe[int]()

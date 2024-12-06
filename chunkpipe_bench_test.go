@@ -300,3 +300,36 @@ func BenchmarkGet(b *testing.B) {
 		})
 	}
 }
+
+// 基準測試：批量推送操作
+func BenchmarkPushBatch(b *testing.B) {
+	sizes := []int{100, 1000, 10000, 100000}
+	for _, size := range sizes {
+		data := make([]byte, size)
+		for i := range data {
+			data[i] = byte(i % 256)
+		}
+
+		b.Run(fmt.Sprintf("ChunkPipe-Push-%d", size), func(b *testing.B) {
+			cp := NewChunkPipe[byte]()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				cp.Push(data)
+				if i%100 == 99 {
+					cp = NewChunkPipe[byte]()
+				}
+			}
+		})
+
+		b.Run(fmt.Sprintf("Slice-Append-%d", size), func(b *testing.B) {
+			var slice []byte
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				slice = append(slice, data...)
+				if i%100 == 99 {
+					slice = nil // 定期重置
+				}
+			}
+		})
+	}
+}
