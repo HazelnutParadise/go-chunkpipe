@@ -40,56 +40,40 @@ func (sl *SkipList[T]) Insert(position uintptr, data unsafe.Pointer) {
 	var update [maxLevel]unsafe.Pointer
 	current := sl.header
 
-	baseLevel := uintptr(sl.level - 1)
-	currentNode := (*SkipListNode[T])(current)
-
-	levelSize := unsafe.Sizeof(unsafe.Pointer(nil))
-	for level := baseLevel; ; level-- {
-		forwardPtr := unsafe.Add(unsafe.Pointer(&currentNode.forward[0]), level*levelSize)
-		nextPtr := *(*unsafe.Pointer)(forwardPtr)
-
-		for nextPtr != nil {
-			nextNode := (*SkipListNode[T])(nextPtr)
-			if nextNode.position >= position {
-				break
-			}
-			current = nextPtr
-			currentNode = nextNode
-			nextPtr = *(*unsafe.Pointer)(unsafe.Add(unsafe.Pointer(&nextNode.forward[0]), level*levelSize))
+	// 從最高層開始搜索
+	for i := sl.level - 1; i >= 0; i-- {
+		for current != nil && (*SkipListNode[T])(current).position < position {
+			current = (*SkipListNode[T])(current).forward[i]
 		}
-
-		update[level] = current
-		if level == 0 {
-			break
-		}
+		update[i] = current
 	}
 
+	// 隨機生成新節點的層數
+	level := 1
+	for level < maxLevel && fastrand()%2 == 0 {
+		level++
+	}
+
+	// 創建新節點
 	node := (*SkipListNode[T])(skipNodePool.Get().(*SkipListNode[byte]))
 	node.data = data
 	node.position = position
 
-	newLevel := uintptr(1)
-	for newLevel < maxLevel && fastrand()&1 == 0 {
-		newLevel++
-	}
-
-	if newLevel > uintptr(sl.level) {
-		headerPtr := unsafe.Pointer(&sl.header)
-		for i := uintptr(sl.level); i < newLevel; i++ {
-			update[i] = headerPtr
+	// 如果新層數大於當前層數，更新層數
+	if level > sl.level {
+		for i := sl.level; i < level; i++ {
+			update[i] = sl.header
 		}
-		sl.level = int(newLevel)
+		sl.level = level
 	}
 
-	nodeForwardBase := unsafe.Pointer(&node.forward[0])
-	for i := uintptr(0); i < newLevel; i++ {
-		updateNode := (*SkipListNode[T])(update[i])
-		updateForwardPtr := unsafe.Add(unsafe.Pointer(&updateNode.forward[0]), i*levelSize)
-
-		*(*unsafe.Pointer)(unsafe.Add(nodeForwardBase, i*levelSize)) =
-			*(*unsafe.Pointer)(updateForwardPtr)
-
-		*(*unsafe.Pointer)(updateForwardPtr) = unsafe.Pointer(node)
+	// 更新指針
+	for i := 0; i < level; i++ {
+		if update[i] != nil {
+			updateNode := (*SkipListNode[T])(update[i])
+			node.forward[i] = updateNode.forward[i]
+			updateNode.forward[i] = unsafe.Pointer(node)
+		}
 	}
 }
 
