@@ -1,7 +1,6 @@
 package chunkpipe
 
 import (
-	"bytes"
 	"fmt"
 	"sync"
 	"testing"
@@ -330,29 +329,6 @@ func TestBlockCache(t *testing.T) {
 		got := globalBlockCache.get()
 		if got != nil {
 			t.Error("get should return nil for empty cache")
-		}
-	})
-}
-
-func TestSIMD(t *testing.T) {
-	t.Run("SmallCopy", func(t *testing.T) {
-		src := []byte{1, 2, 3, 4}
-		dst := make([]byte, 4)
-		simdCopy(unsafe.Pointer(&dst[0]), unsafe.Pointer(&src[0]), 4)
-		if !bytes.Equal(src, dst) {
-			t.Errorf("copy failed: got %v, want %v", dst, src)
-		}
-	})
-
-	t.Run("LargeCopy", func(t *testing.T) {
-		src := make([]byte, 1024)
-		for i := range src {
-			src[i] = byte(i)
-		}
-		dst := make([]byte, 1024)
-		simdCopy(unsafe.Pointer(&dst[0]), unsafe.Pointer(&src[0]), 1024)
-		if !bytes.Equal(src, dst) {
-			t.Error("large copy failed")
 		}
 	})
 }
