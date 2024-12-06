@@ -93,52 +93,51 @@ goos: darwin
 goarch: amd64
 pkg: github.com/HazelnutParadise/go-chunkpipe
 cpu: Intel(R) Core(TM) i5-8257U CPU @ 1.40GHz
-BenchmarkPush10x10000-8            	    1975	    588818 ns/op	 1471250 B/op	      22 allocs/op
-BenchmarkPush100x1000-8            	   27477	     42939 ns/op	   70416 B/op	      14 allocs/op
-BenchmarkPush1000x100-8            	  242695	      5063 ns/op	    9488 B/op	      11 allocs/op
-BenchmarkPush10000x10-8            	 1541936	       784.1 ns/op	    1168 B/op	       8 allocs/op
-BenchmarkPopEnd10x10000-8          	     393	   3063405 ns/op	       1 B/op	       0 allocs/op
-BenchmarkPopEnd100x1000-8          	     390	   3103725 ns/op	       0 B/op	       0 allocs/op
-BenchmarkPopEnd1000x100-8          	     380	   3086392 ns/op	       0 B/op	       0 allocs/op
-BenchmarkPopEnd10000x10-8          	     394	   3147257 ns/op	       0 B/op	       0 allocs/op
-BenchmarkPopChunkEnd10x10000-8     	    3658	    327186 ns/op	       0 B/op	       0 allocs/op
-BenchmarkPopChunkEnd100x1000-8     	   35132	     34392 ns/op	       0 B/op	       0 allocs/op
-BenchmarkPopChunkEnd1000x100-8     	  357068	      3396 ns/op	       0 B/op	       0 allocs/op
-BenchmarkPopFront10x10000-8        	     375	   3182231 ns/op	       2 B/op	       0 allocs/op
-BenchmarkPopFront100x1000-8        	     372	   3132868 ns/op	       0 B/op	       0 allocs/op
-BenchmarkPopFront1000x100-8        	     384	   3126844 ns/op	       0 B/op	       0 allocs/op
-BenchmarkPopFront10000x10-8        	     370	   3124347 ns/op	       0 B/op	       0 allocs/op
-BenchmarkPopChunkFront10x10000-8   	    3400	    349421 ns/op	       1 B/op	       0 allocs/op
-BenchmarkPopChunkFront100x1000-8   	   33212	     36146 ns/op	       0 B/op	       0 allocs/op
-BenchmarkPopChunkFront1000x100-8   	  335590	      3633 ns/op	       0 B/op	       0 allocs/op
-BenchmarkGet10x10000-8             	     294	   3917424 ns/op	       0 B/op	       0 allocs/op
-BenchmarkGet100x1000-8             	     362	   3182840 ns/op	       0 B/op	       0 allocs/op
-BenchmarkGet1000x100-8             	     441	   2773150 ns/op	       0 B/op	       0 allocs/op
-BenchmarkGet10000x10-8             	     532	   2345628 ns/op	       0 B/op	       0 allocs/op
-BenchmarkIterators/ValueIter-100-8 	  343912	      3473 ns/op	       0 B/op	       0 allocs/op
-BenchmarkIterators/ChunkIter-100-8 	243476312	         4.895 ns/op	       0 B/op	       0 allocs/op
-BenchmarkIterators/ValueSlice-100-8         	 7504990	       158.1 ns/op	     136 B/op	       2 allocs/op
-BenchmarkIterators/ChunkSlice-100-8         	13200513	        91.09 ns/op	      48 B/op	       2 allocs/op
-BenchmarkIterators/NativeSlice-100-8        	35556332	        33.60 ns/op	       0 B/op	       0 allocs/op
-BenchmarkIterators/NativeSliceValue-100-8   	35357124	        33.89 ns/op	       0 B/op	       0 allocs/op
-BenchmarkIterators/ValueIter-1000-8         	   31726	     37196 ns/op	       0 B/op	       0 allocs/op
-BenchmarkIterators/ChunkIter-1000-8         	242948145	         4.892 ns/op	       0 B/op	       0 allocs/op
-BenchmarkIterators/ValueSlice-1000-8        	 1474521	       798.5 ns/op	    1048 B/op	       2 allocs/op
-BenchmarkIterators/ChunkSlice-1000-8        	13232380	        91.34 ns/op	      48 B/op	       2 allocs/op
-BenchmarkIterators/NativeSlice-1000-8       	 4268137	       279.5 ns/op	       0 B/op	       0 allocs/op
-BenchmarkIterators/NativeSliceValue-1000-8  	 4317121	       280.4 ns/op	       0 B/op	       0 allocs/op
-BenchmarkIterators/ValueIter-10000-8        	    3254	    409494 ns/op	       0 B/op	       0 allocs/op
-BenchmarkIterators/ChunkIter-10000-8        	245612413	         4.940 ns/op	       0 B/op	       0 allocs/op
-BenchmarkIterators/ValueSlice-10000-8       	  157148	      7648 ns/op	   10267 B/op	       2 allocs/op
-BenchmarkIterators/ChunkSlice-10000-8       	12230442	        90.33 ns/op	      48 B/op	       2 allocs/op
-BenchmarkIterators/NativeSlice-10000-8      	  436372	      2733 ns/op	       0 B/op	       0 allocs/op
-BenchmarkIterators/NativeSliceValue-10000-8 	  439077	      2734 ns/op	       0 B/op	       0 allocs/op
-BenchmarkConcurrentOperations-8             	 4058548	       298.1 ns/op	     185 B/op	       1 allocs/op
-BenchmarkMixedOperations/ChunkPipe-8        	12251431	        95.56 ns/op	      24 B/op	       1 allocs/op
-BenchmarkMemoryUsage/ChunkPipe-1024-8       	  107380	    118717 ns/op	     165 B/op	       0 allocs/op
-BenchmarkMemoryUsage/ChunkPipe-1048576-8    	  109278	    121646 ns/op	     162 B/op	       0 allocs/op
+BenchmarkPush10x10000-8            	    1974	    586864 ns/op	 1471248 B/op	      22 allocs/op
+BenchmarkPush100x1000-8            	   27574	     42988 ns/op	   70416 B/op	      14 allocs/op
+BenchmarkPush1000x100-8            	  233354	      5047 ns/op	    9488 B/op	      11 allocs/op
+BenchmarkPush10000x10-8            	 1528660	       780.8 ns/op	    1168 B/op	       8 allocs/op
+BenchmarkPopEnd10x10000-8          	     392	   3051630 ns/op	       4 B/op	       0 allocs/op
+BenchmarkPopEnd100x1000-8          	     394	   3043298 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPopEnd1000x100-8          	     388	   3107123 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPopEnd10000x10-8          	     391	   3069640 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPopChunkEnd10x10000-8     	    3645	    325008 ns/op	       1 B/op	       0 allocs/op
+BenchmarkPopChunkEnd100x1000-8     	   35226	     34207 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPopChunkEnd1000x100-8     	  360807	      3357 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPopFront10x10000-8        	     375	   3208795 ns/op	       1 B/op	       0 allocs/op
+BenchmarkPopFront100x1000-8        	     390	   3104614 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPopFront1000x100-8        	     382	   3111622 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPopFront10000x10-8        	     385	   3118345 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPopChunkFront10x10000-8   	    3459	    352298 ns/op	       1 B/op	       0 allocs/op
+BenchmarkPopChunkFront100x1000-8   	   33417	     36018 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPopChunkFront1000x100-8   	  332174	      3626 ns/op	       0 B/op	       0 allocs/op
+BenchmarkGet10x10000-8             	     309	   3903466 ns/op	       0 B/op	       0 allocs/op
+BenchmarkGet100x1000-8             	     376	   3282774 ns/op	       0 B/op	       0 allocs/op
+BenchmarkGet1000x100-8             	     440	   2781244 ns/op	       0 B/op	       0 allocs/op
+BenchmarkGet10000x10-8             	     535	   2526536 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIterators/ValueIter-100-8 	  342345	      3469 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIterators/ChunkIter-100-8 	239480233	         4.921 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIterators/ValueSlice-100-8         	 8930395	       131.5 ns/op	     112 B/op	       1 allocs/op
+BenchmarkIterators/ChunkSlice-100-8         	18898441	        64.16 ns/op	      24 B/op	       1 allocs/op
+BenchmarkIterators/NativeSlice-100-8        	36066339	        34.06 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIterators/NativeSliceValue-100-8   	35114096	        33.73 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIterators/ValueIter-1000-8         	   31244	     37233 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIterators/ChunkIter-1000-8         	242143387	         4.899 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIterators/ValueSlice-1000-8        	 1450884	       821.0 ns/op	    1024 B/op	       1 allocs/op
+BenchmarkIterators/ChunkSlice-1000-8        	18989221	        63.90 ns/op	      24 B/op	       1 allocs/op
+BenchmarkIterators/NativeSlice-1000-8       	 4262838	       279.6 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIterators/NativeSliceValue-1000-8  	 4270159	       279.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIterators/ValueIter-10000-8        	    3230	    374869 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIterators/ChunkIter-10000-8        	245922144	         4.907 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIterators/ValueSlice-10000-8       	  160245	      7507 ns/op	   10243 B/op	       1 allocs/op
+BenchmarkIterators/ChunkSlice-10000-8       	18917146	        62.46 ns/op	      24 B/op	       1 allocs/op
+BenchmarkIterators/NativeSlice-10000-8      	  432609	      2744 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIterators/NativeSliceValue-10000-8 	  443089	      2748 ns/op	       0 B/op	       0 allocs/op
+BenchmarkConcurrentOperations-8             	 3748714	       293.2 ns/op	     198 B/op	       1 allocs/op
+BenchmarkMixedOperations/ChunkPipe-8        	12126363	        95.74 ns/op	      24 B/op	       1 allocs/op
+BenchmarkMemoryUsage/ChunkPipe-1024-8       	  107095	    119486 ns/op	     165 B/op	       0 allocs/op
+BenchmarkMemoryUsage/ChunkPipe-1048576-8    	  107215	    121289 ns/op	     165 B/op	       0 allocs/op
 PASS
-coverage: 81.7% of statements
-ok  	github.com/HazelnutParadise/go-chunkpipe	160.519s
-
+coverage: 82.2% of statements
+ok  	github.com/HazelnutParadise/go-chunkpipe	159.874s
 ```

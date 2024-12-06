@@ -16,17 +16,19 @@ type offset[T any] struct {
 	val []T
 }
 
-// 修改 NewChunkPipe 函數來初始化 pools
+// 在 ChunkPipe 結構體中修改 New 函數的返回類型
 func NewChunkPipe[T any]() *ChunkPipe[T] {
 	cp := &ChunkPipe[T]{
 		valuePool: sync.Pool{
 			New: func() interface{} {
-				return make([]T, 0)
+				slice := make([]T, 0)
+				return &slice // 返回指針
 			},
 		},
 		chunkPool: sync.Pool{
 			New: func() interface{} {
-				return make([][]T, 0)
+				slice := make([][]T, 0)
+				return &slice // 返回指針
 			},
 		},
 	}

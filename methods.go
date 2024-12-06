@@ -140,10 +140,11 @@ func (cl *ChunkPipe[T]) ValueSlice() []T {
 
 	size := cl.list[len(cl.list)-1].off - cl.offset
 	// 從 cl.valuePool 中獲取切片
-	ret := cl.valuePool.Get().([]T)
+	slicePtr := cl.valuePool.Get().(*[]T)
+	ret := *slicePtr
 	// 確保切片容量足夠
 	if cap(ret) < size {
-		cl.valuePool.Put(ret)
+		cl.valuePool.Put(slicePtr)
 		ret = make([]T, size)
 	} else {
 		ret = ret[:size]
@@ -169,10 +170,11 @@ func (cl *ChunkPipe[T]) ChunkSlice() [][]T {
 	}
 
 	// 從 cl.chunkPool 中獲取切片
-	ret := cl.chunkPool.Get().([][]T)
+	slicePtr := cl.chunkPool.Get().(*[][]T)
+	ret := *slicePtr
 	// 確保切片容量足夠
 	if cap(ret) < len(cl.list) {
-		cl.chunkPool.Put(ret)
+		cl.chunkPool.Put(slicePtr)
 		ret = make([][]T, len(cl.list))
 	} else {
 		ret = ret[:len(cl.list)]
@@ -240,13 +242,13 @@ func (it *ChunkIterator[T]) V() []T {
 func (cl *ChunkPipe[T]) PutValueSlice(slice []T) {
 	if cap(slice) > 0 {
 		slice = slice[:0]
-		cl.valuePool.Put(slice)
+		cl.valuePool.Put(&slice)
 	}
 }
 
 func (cl *ChunkPipe[T]) PutChunkSlice(slice [][]T) {
 	if cap(slice) > 0 {
 		slice = slice[:0]
-		cl.chunkPool.Put(slice)
+		cl.chunkPool.Put(&slice)
 	}
 }
