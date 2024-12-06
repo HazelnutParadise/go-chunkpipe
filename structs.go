@@ -17,7 +17,7 @@ type Chunk[T any] struct {
 
 // 主結構 ChunkPipe
 type ChunkPipe[T any] struct {
-	pool      *MemoryPool  // 記憶體池
+	pool      *memoryPool  // 記憶體池
 	head      *Chunk[T]    // 頭節點
 	tail      *Chunk[T]    // 尾節點
 	totalSize int32        // 總大小
