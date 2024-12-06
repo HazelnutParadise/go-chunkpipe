@@ -91,8 +91,8 @@ func TestEdgeCases(t *testing.T) {
 		cp := NewChunkPipe[byte]()
 		data := make([]byte, 1000000)
 		cp.Push(data)
-		if cp.validSize != 1000000 {
-			t.Errorf("Expected size 1000000, got %d", cp.validSize)
+		if cp.size() != 1000000 {
+			t.Errorf("Expected size 1000000, got %d", cp.size())
 		}
 	})
 
@@ -146,8 +146,8 @@ func TestLargeDataHandling(t *testing.T) {
 			cp.Push(data)
 
 			// 驗證大小
-			if cp.validSize != int32(size) {
-				t.Errorf("Expected size %d, got %d", size, cp.validSize)
+			if cp.size() != size {
+				t.Errorf("Expected size %d, got %d", size, cp.size())
 			}
 
 			// 測試讀取
@@ -209,8 +209,8 @@ func TestPublicMethods(t *testing.T) {
 		cp := NewChunkPipe[int]()
 		data := []int{1, 2, 3}
 		cp.Push(data)
-		if cp.validSize != 3 {
-			t.Errorf("Push failed: expected size 3, got %d", cp.validSize)
+		if cp.size() != 3 {
+			t.Errorf("Push failed: expected size 3, got %d", cp.size())
 		}
 	})
 
