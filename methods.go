@@ -178,25 +178,6 @@ func (cl *ChunkPipe[T]) Get(index int) (T, bool) {
 	return zero, false
 }
 
-// 建立索引
-func (cl *ChunkPipe[T]) buildIndex() {
-	if cl.bptree != nil {
-		return
-	}
-
-	cl.bptree = NewBPTree[T]()
-	current := cl.head
-	offset := uintptr(0)
-
-	for current != nil {
-		validCount := int(current.size - current.offset)
-		dataPtr := unsafe.Add(current.data, uintptr(current.offset)*unsafe.Sizeof(*new(T)))
-		cl.bptree.Insert(offset, dataPtr)
-		offset += uintptr(validCount)
-		current = current.next
-	}
-}
-
 // 從頭部彈出數據
 func (cl *ChunkPipe[T]) PopChunkFront() ([]T, bool) {
 	cl.mu.Lock()
