@@ -28,9 +28,7 @@ go get -u github.com/HazelnutParadise/go-chunkpipe@latest
 ## 使用
 
 ```go
-import (
-	chunkpipe "github.com/HazelnutParadise/go-chunkpipe"
-)
+import "github.com/HazelnutParadise/go-chunkpipe"
 ```
 
 ### 初始化
