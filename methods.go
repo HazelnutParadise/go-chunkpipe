@@ -237,18 +237,3 @@ func (it *ChunkIterator[T]) V() []T {
 	var zero []T
 	return zero
 }
-
-// 當使用完切片後，應該調用這些方法將切片放回 pool
-func (cl *ChunkPipe[T]) PutValueSlice(slice []T) {
-	if cap(slice) > 0 {
-		slice = slice[:0]
-		cl.valuePool.Put(&slice)
-	}
-}
-
-func (cl *ChunkPipe[T]) PutChunkSlice(slice [][]T) {
-	if cap(slice) > 0 {
-		slice = slice[:0]
-		cl.chunkPool.Put(&slice)
-	}
-}
