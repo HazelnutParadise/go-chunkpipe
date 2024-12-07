@@ -16,7 +16,7 @@ type ChunkPipe[T any] struct {
 
 type offset[T any] struct {
 	off int
-	val []T
+	val *[]T
 }
 
 // 在 ChunkPipe 結構體中修改 New 函數的返回類型
