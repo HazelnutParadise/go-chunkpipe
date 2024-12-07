@@ -6,9 +6,9 @@ import (
 )
 
 type ChunkPipe[T any] struct {
-	mu       sync.RWMutex
-	listPool sync.Pool
-	offset   int
+	mu     sync.RWMutex
+	list   []offset[T]
+	offset int
 	// 新增 pools
 	valueSlicePool sync.Pool
 	chunkSlicePool sync.Pool
@@ -22,11 +22,6 @@ type offset[T any] struct {
 // 在 ChunkPipe 結構體中修改 New 函數的返回類型
 func NewChunkPipe[T any]() *ChunkPipe[T] {
 	cp := &ChunkPipe[T]{
-		listPool: sync.Pool{
-			New: func() interface{} {
-				return &[]offset[T]{}
-			},
-		},
 		chunkSlicePool: sync.Pool{
 			New: func() interface{} {
 				slice := make([][]T, 1024)
@@ -42,7 +37,7 @@ func NewChunkPipe[T any]() *ChunkPipe[T] {
 	}
 
 	go func() {
-		runtime.KeepAlive(&cp.listPool)
+		runtime.KeepAlive(&cp.list)
 		runtime.KeepAlive(&cp.valueSlicePool)
 		runtime.KeepAlive(&cp.chunkSlicePool)
 	}()

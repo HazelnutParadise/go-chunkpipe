@@ -11,20 +11,16 @@ func (cl *ChunkPipe[T]) Push(data []T) *ChunkPipe[T] {
 	}
 
 	cl.mu.Lock()
+	defer cl.mu.Unlock()
 	off := cl.offset
-	listPtr := cl.listPool.Get().(*[]offset[T])
-	defer func() {
-		cl.listPool.Put(listPtr)
-		cl.mu.Unlock()
-	}()
-	list := *listPtr
+	list := cl.list
 	listLen := len(list)
 
 	if listLen != 0 {
 		off = list[listLen-1].off
 	}
 
-	*listPtr = append(list, offset[T]{
+	cl.list = append(cl.list, offset[T]{
 		val: data,
 		off: off + dataLen,
 	})
@@ -34,13 +30,7 @@ func (cl *ChunkPipe[T]) Push(data []T) *ChunkPipe[T] {
 
 func (cl *ChunkPipe[T]) Get(index int) (T, bool) {
 	var zero T
-	cl.mu.Lock()
-	listPtr := cl.listPool.Get().(*[]offset[T])
-	defer func() {
-		cl.listPool.Put(listPtr)
-		cl.mu.Unlock()
-	}()
-	list := *listPtr
+	list := cl.list
 	listLen := len(list)
 
 	if listLen == 0 || index < 0 {
@@ -80,18 +70,14 @@ func (cl *ChunkPipe[T]) Get(index int) (T, bool) {
 // 從頭部彈出數據
 func (cl *ChunkPipe[T]) PopChunkFront() ([]T, bool) {
 	cl.mu.Lock()
+	defer cl.mu.Unlock()
 
-	listPtr := cl.listPool.Get().(*[]offset[T])
-	defer func() {
-		cl.listPool.Put(listPtr)
-		cl.mu.Unlock()
-	}()
-	list := *listPtr
+	list := cl.list
 	listLen := len(list)
 	if listLen > 0 {
 		cl.offset = list[0].off
 		ret := list[0].val
-		*listPtr = list[1:]
+		cl.list = list[1:]
 		return ret, true
 	}
 	return nil, false
@@ -100,19 +86,15 @@ func (cl *ChunkPipe[T]) PopChunkFront() ([]T, bool) {
 // 從尾部彈出數據
 func (cl *ChunkPipe[T]) PopChunkEnd() ([]T, bool) {
 	cl.mu.Lock()
+	defer cl.mu.Unlock()
 
-	listPtr := cl.listPool.Get().(*[]offset[T])
-	defer func() {
-		cl.listPool.Put(listPtr)
-		cl.mu.Unlock()
-	}()
-	list := *listPtr
+	list := cl.list
 	listLen := len(list)
 	listLenMinusOne := listLen - 1
 
 	if listLen > 0 {
 		ret := list[listLenMinusOne].val
-		*listPtr = list[:listLenMinusOne]
+		cl.list = list[:listLenMinusOne]
 		return ret, true
 	}
 	return nil, false
@@ -120,13 +102,9 @@ func (cl *ChunkPipe[T]) PopChunkEnd() ([]T, bool) {
 
 func (cl *ChunkPipe[T]) PopFront() (T, bool) {
 	cl.mu.Lock()
+	defer cl.mu.Unlock()
 
-	listPtr := cl.listPool.Get().(*[]offset[T])
-	defer func() {
-		cl.listPool.Put(listPtr)
-		cl.mu.Unlock()
-	}()
-	list := *listPtr
+	list := cl.list
 	listLen := len(list)
 
 	if listLen > 0 {
@@ -136,7 +114,7 @@ func (cl *ChunkPipe[T]) PopFront() (T, bool) {
 		list[0].val = val
 		cl.offset++
 		if len(val) == 0 {
-			*listPtr = list[1:]
+			cl.list = list[1:]
 		}
 		return ret, true
 	}
@@ -147,13 +125,9 @@ func (cl *ChunkPipe[T]) PopFront() (T, bool) {
 // 從尾部彈出數據
 func (cl *ChunkPipe[T]) PopEnd() (T, bool) {
 	cl.mu.Lock()
+	defer cl.mu.Unlock()
 
-	listPtr := cl.listPool.Get().(*[]offset[T])
-	defer func() {
-		cl.listPool.Put(listPtr)
-		cl.mu.Unlock()
-	}()
-	list := *listPtr
+	list := cl.list
 	listLen := len(list)
 
 	var ret T
@@ -166,8 +140,8 @@ func (cl *ChunkPipe[T]) PopEnd() (T, bool) {
 	valLen := len(val)
 
 	if valLen == 0 {
-		// 如果當前塊為空，移除整�塊
-		*listPtr = list[:listLenMinusOne]
+		// 如果當前塊為空，移除整塊
+		cl.list = list[:listLenMinusOne]
 		return ret, false
 	}
 
@@ -179,7 +153,7 @@ func (cl *ChunkPipe[T]) PopEnd() (T, bool) {
 
 	if valLen == 1 {
 		// 如果這是塊中的最後一個元素，移除整個塊
-		*listPtr = list[:listLenMinusOne]
+		cl.list = list[:listLenMinusOne]
 	}
 
 	return ret, true
@@ -187,15 +161,10 @@ func (cl *ChunkPipe[T]) PopEnd() (T, bool) {
 
 // ValueSlice 返回所有值的切片
 func (cl *ChunkPipe[T]) ValueSlice() []T {
-	cl.mu.Lock()
+	list := cl.list
+	listLen := len(list)
 
-	listPtr := cl.listPool.Get().(*[]offset[T])
-	defer func() {
-		cl.listPool.Put(listPtr)
-		cl.mu.Unlock()
-	}()
-	list := *listPtr
-	if len(list) == 0 {
+	if listLen == 0 {
 		return []T{}
 	}
 
@@ -223,14 +192,7 @@ func (cl *ChunkPipe[T]) ValueSlice() []T {
 
 // ChunkSlice 返回所有數據塊的切片
 func (cl *ChunkPipe[T]) ChunkSlice() [][]T {
-	cl.mu.Lock()
-
-	listPtr := cl.listPool.Get().(*[]offset[T])
-	defer func() {
-		cl.listPool.Put(listPtr)
-		cl.mu.Unlock()
-	}()
-	list := *listPtr
+	list := cl.list
 	listLen := len(list)
 
 	if listLen == 0 {
@@ -255,14 +217,7 @@ func (cl *ChunkPipe[T]) ChunkSlice() [][]T {
 }
 
 func (cl *ChunkPipe[T]) size() int {
-	cl.mu.Lock()
-
-	listPtr := cl.listPool.Get().(*[]offset[T])
-	defer func() {
-		cl.listPool.Put(listPtr)
-		cl.mu.Unlock()
-	}()
-	list := *listPtr
+	list := cl.list
 	listLen := len(list)
 
 	if listLen == 0 {
@@ -302,17 +257,13 @@ func (it *ValueIterator[T]) V() T {
 // ChunkIterator 的方法
 func (it *ChunkIterator[T]) Next() bool {
 	it.pos++
-	listPtr := it.pipe.listPool.Get().(*[]offset[T])
-	defer it.pipe.listPool.Put(listPtr)
-	list := *listPtr
+	list := it.pipe.list
 
 	return it.pos < len(list)
 }
 
 func (it *ChunkIterator[T]) V() []T {
-	listPtr := it.pipe.listPool.Get().(*[]offset[T])
-	defer it.pipe.listPool.Put(listPtr)
-	list := *listPtr
+	list := it.pipe.list
 
 	if it.pos < len(list) && it.pos >= 0 {
 		return list[it.pos].val
