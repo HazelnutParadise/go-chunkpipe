@@ -1,6 +1,9 @@
 package chunkpipe
 
-import "sync"
+import (
+	"runtime"
+	"sync"
+)
 
 type ChunkPipe[T any] struct {
 	mu     sync.RWMutex
@@ -21,17 +24,22 @@ func NewChunkPipe[T any]() *ChunkPipe[T] {
 	cp := &ChunkPipe[T]{
 		valueSlicePool: sync.Pool{
 			New: func() interface{} {
-				slice := make([]T, 0)
+				slice := make([]T, 1024)
 				return &slice // 返回指針
 			},
 		},
 		chunkSlicePool: sync.Pool{
 			New: func() interface{} {
-				slice := make([][]T, 0)
+				slice := make([][]T, 1024)
 				return &slice // 返回指針
 			},
 		},
 	}
+
+	go func() {
+		runtime.KeepAlive(&cp.valueSlicePool)
+		runtime.KeepAlive(&cp.chunkSlicePool)
+	}()
 	return cp
 }
 
