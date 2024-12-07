@@ -1,47 +1,56 @@
 package chunkpipe
 
-func (cp *ChunkPipe[T]) setValueCache(index int, value T) {
-	cp.valueCache.Store(index, value)
+func (vc *valueCache[T]) setValueCache(index int, value *T) {
+	vc.mu.Lock()
+	defer vc.mu.Unlock()
+	for index >= len(vc.cache) {
+		vc.cache = append(vc.cache, make([]*T, 0, 1024)...)
+	}
+
+	vc.cache[index] = value
 }
 
-func (cp *ChunkPipe[T]) getValueCache(index int) *T {
-	cached, ok := cp.valueCache.Load(index)
-	if !ok {
+func (vc *valueCache[T]) getValueCache(index int) *T {
+	vc.mu.RLock()
+	defer vc.mu.RUnlock()
+
+	if index < 0 || index >= len(vc.cache) {
 		return nil
 	}
 
-	typedCache := cached.(T)
-	return &typedCache
+	return vc.cache[index]
 }
 
-func (cp *ChunkPipe[T]) dropFirstValueCache() {
-	count := 0
-	// 修正索引
-	cp.valueCache.Range(func(key, value any) bool {
-		cp.valueCache.Store(key.(int)-1, value)
-		count++
-		return true
-	})
-	// 移除最後一個
-	cp.valueCache.Delete(count - 1)
+func (vc *valueCache[T]) dropFirstValueCache() {
+	vc.mu.Lock()
+	defer vc.mu.Unlock()
+
+	if len(vc.cache) > 0 {
+		vc.cache = vc.cache[1:]
+	}
 }
 
-func (cp *ChunkPipe[T]) dropLastValueCache() {
-	count := 0
-	cp.valueCache.Range(func(key, value any) bool {
-		count++
-		return true
-	})
-	cp.valueCache.Delete(count - 1)
+func (vc *valueCache[T]) dropValueCacheBefore(index int) {
+	vc.mu.Lock()
+	defer vc.mu.Unlock()
+
+	if index >= len(vc.cache) {
+		return
+	}
+
+	vc.cache = vc.cache[index:]
 }
 
-func (cp *ChunkPipe[T]) clearValueCache() {
-	cp.valueCache.Range(func(key, value any) bool {
-		cp.valueCache.Delete(key)
-		return true
-	})
+func (vc *valueCache[T]) clearValueCache() {
+	vc.mu.Lock()
+	defer vc.mu.Unlock()
+
+	vc.cache = make([]*T, 0, 1024)
 }
 
-func (cp *ChunkPipe[T]) deleteValueCache(index int) {
-	cp.valueCache.Delete(index)
+func (vc *valueCache[T]) deleteValueCache(index int) {
+	vc.mu.Lock()
+	defer vc.mu.Unlock()
+
+	vc.cache[index] = nil
 }
