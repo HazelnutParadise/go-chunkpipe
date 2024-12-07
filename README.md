@@ -77,11 +77,21 @@ cp.Get(index)
 
 #### 迭代器
 
+1. 迭代元素
 ```go
 iter := cp.ValueIter()
 for iter.Next() {
     value := iter.V()
     // do something with value
+}
+```
+
+2. 迭代塊
+```go
+iter := cp.ChunkIter()
+for iter.Next() {
+    chunk := iter.V()
+    // do something with chunk
 }
 ```
 
