@@ -12,6 +12,8 @@ type ChunkPipe[T any] struct {
 	// 新增 pools
 	valueSlicePool sync.Pool
 	chunkSlicePool sync.Pool
+
+	valueCache sync.Map
 }
 
 type offset[T any] struct {

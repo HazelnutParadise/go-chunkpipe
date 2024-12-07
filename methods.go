@@ -30,11 +30,17 @@ func (cl *ChunkPipe[T]) Push(data []T) *ChunkPipe[T] {
 
 func (cl *ChunkPipe[T]) Get(index int) (T, bool) {
 	var zero T
+	cl.mu.RLock()
+	defer cl.mu.RUnlock()
 	list := cl.list
 	listLen := len(list)
 
 	if listLen == 0 || index < 0 {
 		return zero, false
+	}
+
+	if result := cl.getValueCache(index); result != nil {
+		return *result, true
 	}
 
 	target := index + cl.offset
@@ -64,13 +70,18 @@ func (cl *ChunkPipe[T]) Get(index int) (T, bool) {
 	off := list[r]
 	val := off.val
 	target = len(val) - (off.off - target)
-	return val[target], true
+	result := val[target]
+	go cl.setValueCache(index, result)
+	return result, true
 }
 
 // 從頭部彈出數據
 func (cl *ChunkPipe[T]) PopChunkFront() ([]T, bool) {
 	cl.mu.Lock()
 	defer cl.mu.Unlock()
+
+	// 因為太麻煩所以直接清空
+	go cl.clearValueCache()
 
 	list := cl.list
 	listLen := len(list)
@@ -88,6 +99,9 @@ func (cl *ChunkPipe[T]) PopChunkEnd() ([]T, bool) {
 	cl.mu.Lock()
 	defer cl.mu.Unlock()
 
+	// 因為太麻煩所以直接清空
+	go cl.clearValueCache()
+
 	list := cl.list
 	listLen := len(list)
 	listLenMinusOne := listLen - 1
@@ -103,6 +117,8 @@ func (cl *ChunkPipe[T]) PopChunkEnd() ([]T, bool) {
 func (cl *ChunkPipe[T]) PopFront() (T, bool) {
 	cl.mu.Lock()
 	defer cl.mu.Unlock()
+
+	go cl.dropFirstValueCache()
 
 	list := cl.list
 	listLen := len(list)
@@ -126,6 +142,8 @@ func (cl *ChunkPipe[T]) PopFront() (T, bool) {
 func (cl *ChunkPipe[T]) PopEnd() (T, bool) {
 	cl.mu.Lock()
 	defer cl.mu.Unlock()
+
+	go cl.dropLastValueCache()
 
 	list := cl.list
 	listLen := len(list)
