@@ -161,6 +161,9 @@ func (cl *ChunkPipe[T]) PopEnd() (T, bool) {
 
 // ValueSlice 返回所有值的切片
 func (cl *ChunkPipe[T]) ValueSlice() []T {
+	cl.mu.RLock()
+	defer cl.mu.RUnlock()
+
 	list := cl.list
 	listLen := len(list)
 
@@ -192,6 +195,9 @@ func (cl *ChunkPipe[T]) ValueSlice() []T {
 
 // ChunkSlice 返回所有數據塊的切片
 func (cl *ChunkPipe[T]) ChunkSlice() [][]T {
+	cl.mu.RLock()
+	defer cl.mu.RUnlock()
+
 	list := cl.list
 	listLen := len(list)
 
