@@ -16,7 +16,7 @@ type ChunkPipe[T any] struct {
 
 type offset[T any] struct {
 	off int
-	val *[]T
+	val []T
 }
 
 // 在 ChunkPipe 結構體中修改 New 函數的返回類型
@@ -27,15 +27,15 @@ func NewChunkPipe[T any]() *ChunkPipe[T] {
 				return &[]offset[T]{}
 			},
 		},
-		valueSlicePool: sync.Pool{
-			New: func() interface{} {
-				slice := make([]T, 1024)
-				return &slice // 返回指針
-			},
-		},
 		chunkSlicePool: sync.Pool{
 			New: func() interface{} {
 				slice := make([][]T, 1024)
+				return &slice // 返回指針
+			},
+		},
+		valueSlicePool: sync.Pool{
+			New: func() interface{} {
+				slice := make([]T, 1024)
 				return &slice // 返回指針
 			},
 		},
