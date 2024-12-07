@@ -22,16 +22,16 @@ type offset[T any] struct {
 // 在 ChunkPipe 結構體中修改 New 函數的返回類型
 func NewChunkPipe[T any]() *ChunkPipe[T] {
 	cp := &ChunkPipe[T]{
-		list: make([]offset[T], 0, 1024),
+		list: make([]offset[T], 0, 4096),
 		chunkSlicePool: sync.Pool{
 			New: func() interface{} {
-				slice := make([][]T, 1024)
+				slice := make([][]T, 4096)
 				return &slice // 返回指針
 			},
 		},
 		valueSlicePool: sync.Pool{
 			New: func() interface{} {
-				slice := make([]T, 1024)
+				slice := make([]T, 4096)
 				return &slice // 返回指針
 			},
 		},
