@@ -75,7 +75,7 @@ func (cl *ChunkPipe[T]) Get(index int) (T, bool) {
 	target = len(val) - (chunk.off - target)
 	result := val[target]
 	cl.mu.RUnlock()
-	go cl.valueCache.setValueCache(index, &result)
+	// go cl.valueCache.setValueCache(index, &result)
 	return result, true
 }
 
